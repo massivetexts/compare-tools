@@ -2,6 +2,7 @@ from SRP import Vector_file
 from annoy import AnnoyIndex
 import pandas as pd
 import numpy as np
+from compare_tools.utils import split_mtid, join_mtid
 
 def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10, 
                        check_dupes=False):
@@ -34,7 +35,7 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
                     # Does two things - avoids publicated pages / chunks,
                     # and only allows consecutive streams of a book - once
                     # the stream has moved on, that book can't be added again
-                    htid, seq = ix.split('-')
+                    htid, seq = split_mtid(ix)
                     if lasthtid != htid:
                         if htid in unique:
                             continue
@@ -46,9 +47,6 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
                         continue
                     else:
                         currentseqs.add(seq)
-                        
-                if blacklist and (ix.split('-')[0] in blacklist):
-                    continue
                 
                 assert i == len(ind)
                 i += 1
@@ -82,6 +80,7 @@ class MTAnnoy():
         # This index expects books are in consecutive runs, since it only
         # only stores min annoy id and max annoy id
         self.ind = pd.read_parquet(annoypath+'.index.pq')
+        self.ind['length'] = self.ind['max'] - self.ind['min'] + 1
         
     def _find_htid(self, i):
         result = self.ind[(self.ind['min'] <= i) & (self.ind['max'] >= i)]
@@ -102,8 +101,7 @@ class MTAnnoy():
         return self.ind.loc[htid]
 
     def get_id_by_mtid(self, mtid):
-        htid, seq = mtid.split('-')
-        seq = int(seq)
+        htid, seq = split_mtid(mtid)
         htidref = self.get_id_by_htid(htid)
         return htidref['min'] + seq - 1
     
@@ -111,36 +109,78 @@ class MTAnnoy():
         annoyid = self.get_id_by_mtid(mtid)
         return self.get_nns_by_item(annoyid, n, **kwargs)
 
-    def get_nns_by_item(self, i, n, **kwargs):
+    def get_nns_by_item(self, i, n, include_distances=False, **kwargs):
         '''
         Wrapper around Annoy's get_nns_by_item which returns the mtids for the ids.
         The original method is under MTAnnoy().u.get_nns_by_item
         '''
-        results = self.u.get_nns_by_item(i, n, **kwargs)
-        if kwargs['include_distances']:
+        results = self.u.get_nns_by_item(i, n, include_distances=include_distances, **kwargs)
+        if include_distances:
             results, distances = results
             
         named_results = [self.get_mtid_by_id(i) for i in results]
         
-        if kwargs['include_distances']:
+        if include_distances:
             return (named_results, distances)
         else:
             return named_results
         
-    def get_named_result_df(self, mtid, n=30):
-        ''' Return matches with distances and ranks, in tabular format'''
-        j = 0
-        rows = []
-        r,d = self.get_nns_by_mtid(mtid, n, include_distances=True)
-
-        for mtid,dist in zip(r,d):
-            htid, seq = mtid.split('-')
-            seq = int(seq)
-            if not j:
-                target = htid
-                targetseq = seq
-            else:
-                rows.append((target, targetseq, htid, seq, dist, j))
-            j += 1
-        df = pd.DataFrame(rows, columns=['target', 'target_seq', 'match', 'match_seq', 'dist', 'match_rank'])
+    def _result_df(self, i=None, n=30, max_dist=None, rank=True):
+        ''' Quick id-only lookup, returning a target_i/match_i/dist DataFrame'''
+        r, d = self.u.get_nns_by_item(i, n, include_distances=True)
+        df = pd.DataFrame([(i, match_i, dist) for match_i, dist in zip(r,d)],
+                          columns=['target_i', 'match_i', 'dist'])
+        if max_dist:
+            df = df[df.dist <= max_dist]
+        if rank:
+            df = df.reset_index().rename(columns={'index':'rank'})
+            df = df[['target_i', 'match_i', 'rank', 'dist']]
         return df
+    
+    def _result_df_by_htid(self, htid, n=30, rank=True, max_dist=None, dedupe=True):
+        details = self.ind.loc[htid]
+        vol_df = []
+
+        for i in range(details['min'], details['max']+1):
+            df = self._result_df(i, n=n, max_dist=max_dist, rank=rank)
+            vol_df.append(df)
+        df = pd.concat(vol_df)
+
+        if dedupe:
+            # Dedupe so that each matching chunk can only match with one 
+            # chunk from the volume (i.e. one-to-one)
+            df = (df.groupby('match_i', as_index=False)
+                            .apply(lambda x: x.sort_values('dist').iloc[:1])
+                            .sort_values(['target_i', 'rank'])
+                            .droplevel(1)
+                  )
+        return df
+
+    def get_named_result_df(self, i=None, mtid=None, htid=None, n=30, dedupe=False, max_dist=None):
+        ''' Return matches with distances and ranks, in tabular format.'''
+
+        try:
+            # only one can be set
+            assert len([1 for val in [i,mtid,htid] if val])
+        except:
+            raise AssertionError('Need one (and only one) of i, mtid, or htid')
+            
+        if mtid:
+            ids = [self.get_id_by_mtid(mtid)]
+        
+        if mtid or i:
+            df = self._result_df(i, n=n, max_dist=max_dist, rank=True)
+        elif htid:
+            df = self._result_df_by_htid(htid, n=n, rank=True, max_dist=max_dist, dedupe=dedupe)
+        
+        # Expand item ids to hathitrust id + seq. Replace() is for performance, though
+        # really this process would be faster if something like 'keys' ( {'htid': id} for 
+        # all vectors) was internally kept. I'm not confident that it would scale to 7m,
+        # though - the memory use might preclude multi-processing
+        unique = np.concatenate([df.target_i.unique(), df.match_i.unique()])
+        keys = { i: self.get_mtid_by_id(i) for i in unique }
+        df[['target', 'target_seq']] = df.target_i.replace(keys).str.split('-', expand=True)
+        df[['match', 'match_seq']] = df.match_i.replace(keys).str.split('-', expand=True)
+        df[["match_seq", "target_seq"]] = df[["match_seq", "target_seq"]].apply(pd.to_numeric)
+        
+        return df[['target', 'target_seq', 'match', 'match_seq', 'dist', 'rank']]
