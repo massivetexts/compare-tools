@@ -349,7 +349,7 @@ class HTID(object):
         
     def _rsync_loc(self):
         loc = id_to_rsync(self.htid)
-        return self.rsync_root + loc
+        return os.path.join(self.rsync_root, loc)
 
     @property
     def volume(self):
