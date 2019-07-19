@@ -16,7 +16,7 @@ def split_mtid(mtid):
     return htid, seq
     
 def join_mtid(htid, seq):
-    return "$s-%04.f" % (htid, seq)
+    return "%s-%04.f" % (htid, seq)
 
 def page_counts(id, hathi_loc = "../../hathi-ef/"):
     loc = hathi_loc + id_to_rsync(id)
@@ -239,7 +239,14 @@ class Comparison(object):
         self.similarity_matrix = mat
         return mat
 
-    def plot(self, which = None, ids = None, runs = None, filter = None, width = 500, height = 500):
+    def plot(self, which = None, ids = None, runs = None, filter = None, width = 500,
+             height = 500, scale_domain= None):
+        '''
+        
+        scale_domain: an optional 'domain' argument to Altair's color scale. Use 'unaggregated'
+        to size to the data.
+        '''
+        
         if which is None:
             which = "similarity_matrix"
         
@@ -265,10 +272,14 @@ class Comparison(object):
         colorscale = alt.Color('sim')
 
         if which == 'similarity_matrix':
-            colorscale = alt.Color('sim', scale=alt.Scale(zero=False, domain = [.2, 1]))
+            domain = scale_domain if scale_domain else [-.02, 1.]
+            colorscale = alt.Color('sim',
+                                   scale=alt.Scale(zero=False, domain=domain))
     
         if which == 'similarity_matrix' and self.adjusted:
-            colorscale = alt.Color('sim', scale=alt.Scale(zero=False, domain = [-.05, .3]))
+            domain = scale_domain if scale_domain else [-.05, .3]
+            colorscale = alt.Color('sim', 
+                                   scale=alt.Scale(zero=False, domain = domain))
 
         grid = alt.Chart(data).mark_rect().encode(
             x = "left_seq:O",
