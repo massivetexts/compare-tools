@@ -101,14 +101,14 @@ class ChunkCollection():
             right_ids = left_ids
 
         # Accept htids as well as mtids by checking the first element.
-        def expand_htids(set):
-            if not '-' in list(set)[0]:
+        def expand_htids(iset):
+            if not '-' in list(iset)[0]:
                 output = []
-                for id in set:
+                for id in iset:
                     output.extend(self.htid_lookup[id])
                 output.sort()
                 return output
-            return set
+            return iset
 
         left_ids, right_ids = map(expand_htids, [left_ids, right_ids])
         
