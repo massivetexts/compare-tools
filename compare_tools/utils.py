@@ -8,6 +8,14 @@ import numpy as np
 import json
 import urllib
 import altair as alt
+import warnings
+
+try:
+    from .configuration import rsync_root
+except:
+    warnings.warn("No rsync root found")
+    rsync_root = None
+
 alt.data_transformers.enable('json')
 
 def split_mtid(mtid):
@@ -17,16 +25,6 @@ def split_mtid(mtid):
     
 def join_mtid(htid, seq):
     return "%s-%04.f" % (htid, seq)
-
-def page_counts(id, hathi_loc = "../../hathi-ef/"):
-    loc = hathi_loc + id_to_rsync(id)
-    parquet_loc = loc.replace(".json.bz2", ".parquet")
-    if os.path.exists(parquet_loc):
-        return pd.read_parquet(parquet_loc)
-    vol = list(FeatureReader([loc]).volumes())[0]
-    table = vol.tokenlist().groupby(["page", "token"])['count'].sum().reset_index()
-    table.to_parquet(parquet_loc)
-    return table
 
 class Comparison(object):
 
@@ -229,11 +227,11 @@ class Comparison(object):
             # Cache the left length
             left_length = len(left_set)
             for j, (right_id, right_set) in enumerate(self.right.tokensets.iteritems()):
-                if i <= j:
+                if True: # i <= j:
                     inter = len(left_set.intersection(right_set))
                     sim = inter/(len(right_set) + left_length - inter)
                     mat[i, j] = sim
-                    mat[j, i] = sim
+#                    mat[j, i] = sim
                     
         self._jaccard_mat = mat
         self.similarity_matrix = mat
@@ -340,7 +338,7 @@ class HTID(object):
 
     Essentially a wrapper around the feature reader without any iteration.
     """
-    def __init__(self, htid, rsync_root = "../../hathi-ef"):
+    def __init__(self, htid, rsync_root = rsync_root):
         self.htid = htid
         self.reader = None
         self._volume = None
@@ -362,9 +360,29 @@ class HTID(object):
 
     @property
     def page_counts(self):
-        # This could wrap around parquet.
-        return self.volume.tokenlist().groupby(["page", "token"])['count'].sum().reset_index()
+        """
+        Return a pandas frame with page, token, and count information.
 
+        Searches in two places before returning: first, a local cache:
+        second, an on-disk cache in the pairtree location ending with parquet.
+        """
+        try:
+            return self._page_counts
+        except AttributeError:
+            pass
+        
+        parquet_loc = self._rsync_loc().replace(".json.bz2", ".parquet")
+        
+        if os.path.exists(parquet_loc):
+            return pd.read_parquet(parquet_loc)
+        
+        table = self.volume.tokenlist().groupby(["page", "token"])['count'].sum().reset_index()
+        
+        table.to_parquet(parquet_loc)
+        
+        return table
+
+    
     @property
     def tokensets(self):
         if self._tokensets is not None:
@@ -376,7 +394,7 @@ class HTID(object):
         return self.volume._repr_html_()
 
 class EFComparison(Comparison):
-    def __init__(self, left, right, rsync_root = "../../hathi-ef"):
+    def __init__(self, left, right, rsync_root = rsync_root):
         """
         Initialize with either an HTID object;
         or with two HTID strings.
