@@ -5,7 +5,7 @@ import os
 
 for path in ['local.yaml', '../local.yaml', '../../local.yaml', '../../../local.yaml']:
     try:
-        config = yaml.safe_load(open(f))
+        config = yaml.safe_load(open(path))
     except FileNotFoundError:
         pass
 
