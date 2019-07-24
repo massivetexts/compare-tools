@@ -136,7 +136,7 @@ class MTAnnoy():
             df = df.reset_index().rename(columns={'index':'rank'})
             df = df[['target_i', 'match_i', 'rank', 'dist']]
         return df
-    
+        
     def _result_df_by_htid(self, htid, n=30, rank=True, max_dist=None, dedupe=True):
         details = self.ind.loc[htid]
         vol_df = []
@@ -164,11 +164,9 @@ class MTAnnoy():
             assert len([1 for val in [i,mtid,htid] if val])
         except:
             raise AssertionError('Need one (and only one) of i, mtid, or htid')
-            
         if mtid:
-            ids = [self.get_id_by_mtid(mtid)]
-        
-        if mtid or i:
+            i = self.get_id_by_mtid(mtid)
+        if i: # Gets a single item.
             df = self._result_df(i, n=n, max_dist=max_dist, rank=True)
         elif htid:
             df = self._result_df_by_htid(htid, n=n, rank=True, max_dist=max_dist, dedupe=dedupe)
