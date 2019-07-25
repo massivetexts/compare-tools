@@ -31,6 +31,10 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
         with Vector_file(path, mode='r') as vecf:
             assert dims == vecf.dims
             for ix, vec in vecf:
+                norm = np.linalg.norm(vec)
+                if norm==0 or np.isnan(norm) or np.isinf(norm):
+                    continue
+                vec = vec/norm
                 if check_dupes:
                     # Does two things - avoids publicated pages / chunks,
                     # and only allows consecutive streams of a book - once
@@ -79,7 +83,7 @@ class MTAnnoy():
         
         # This index expects books are in consecutive runs, since it only
         # only stores min annoy id and max annoy id
-        self.ind = pd.read_parquet(annoypath+'.index.pq')
+        self.ind = pd.read_parquet(annoypath + '.index.pq')
         self.ind['length'] = self.ind['max'] - self.ind['min'] + 1
         
     def _find_htid(self, i):
