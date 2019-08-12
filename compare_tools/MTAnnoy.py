@@ -31,6 +31,10 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
         with Vector_file(path, mode='r') as vecf:
             assert dims == vecf.dims
             for ix, vec in vecf:
+                norm = np.linalg.norm(vec)
+                if norm==0 or np.isnan(norm) or np.isinf(norm):
+                    continue
+                vec = vec/norm
                 if check_dupes:
                     # Does two things - avoids publicated pages / chunks,
                     # and only allows consecutive streams of a book - once
@@ -79,7 +83,7 @@ class MTAnnoy():
         
         # This index expects books are in consecutive runs, since it only
         # only stores min annoy id and max annoy id
-        self.ind = pd.read_parquet(annoypath+'.index.pq')
+        self.ind = pd.read_parquet(annoypath + '.index.pq')
         self.ind['length'] = self.ind['max'] - self.ind['min'] + 1
         
     def _find_htid(self, i):
@@ -136,7 +140,7 @@ class MTAnnoy():
             df = df.reset_index().rename(columns={'index':'rank'})
             df = df[['target_i', 'match_i', 'rank', 'dist']]
         return df
-    
+        
     def _result_df_by_htid(self, htid, n=30, rank=True, max_dist=None, dedupe=True):
         details = self.ind.loc[htid]
         vol_df = []
@@ -164,11 +168,9 @@ class MTAnnoy():
             assert len([1 for val in [i,mtid,htid] if val])
         except:
             raise AssertionError('Need one (and only one) of i, mtid, or htid')
-            
         if mtid:
-            ids = [self.get_id_by_mtid(mtid)]
-        
-        if mtid or i:
+            i = self.get_id_by_mtid(mtid)
+        if i: # Gets a single item.
             df = self._result_df(i, n=n, max_dist=max_dist, rank=True)
         elif htid:
             df = self._result_df_by_htid(htid, n=n, rank=True, max_dist=max_dist, dedupe=dedupe)

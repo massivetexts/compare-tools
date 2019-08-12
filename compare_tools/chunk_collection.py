@@ -4,6 +4,7 @@ import SRP
 from collections import defaultdict
 import numpy as np
 import random
+from .configuration import meta_path
 
 """
 Utilities for working with a collection of chunks.
@@ -33,7 +34,7 @@ class ChunkCollection():
     along with associated metadata
 
     """
-    def __init__(self, chunk_file, metadata_file):
+    def __init__(self, chunk_file, metadata_file = meta_path):
         self.metadata = pd.read_csv(metadata_file, low_memory=False).set_index('htid')
         self._initialize_embeddings(chunk_file)
         
@@ -47,10 +48,14 @@ class ChunkCollection():
         
         ids = dataset['names']
         self.ids = ids
-        
-        htids = [a.rsplit("-", 1)[0] for a in dataset['names']]
-        sections = [int(a.rsplit("-", 1)[-1]) for a in dataset['names']]
-        sections = pd.DataFrame({'mtid': ids, 'htid': htids, 'section': sections}).set_index('htid')
+
+        sections = [a.split("-") for a in dataset['names']]
+        try:
+            htids, sections, starts, ends = zip(*sections)
+        except:
+            # The old format: deprecated.
+            htids, sections = zip(*sections)
+        sections = pd.DataFrame({'mtid': ids, 'htid': htids, 'section': list(map(int, sections))}).set_index('htid')
 
         self.chunk_metadata = sections.join(self.metadata, how='left').reset_index()
         
@@ -59,7 +64,73 @@ class ChunkCollection():
         self.htid_lookup = defaultdict(list)
         for i, htid in enumerate(htids):
             self.htid_lookup[htid].append(ids[i])
+
+    def get_named_result_df(self, mtid = None, htid = None, n=30, comps_per_item = 31):
+        if comps_per_item <= n:
+            # Make sure you actually get the guaranteed number of comparisons.
+            comps_per_item = n+1
             
+        if mtid is not None:
+            d= self.get_nns_by_mtid(mtid, comps_per_item)
+            
+        if htid is not None:
+            d = self.get_nns_by_htid(htid, comps_per_item)
+            
+        data = pd.DataFrame(d, columns = ["left", "right", "sim"])
+        data = data[data['left'] != data['right']]
+        d = data["left"].str.split("-", n=1, expand = True)
+        data["target"] = d[0]
+        data["target_seq"] = d[1].astype('int')
+
+        d = data["right"].str.split("-", n=1, expand = True)
+        data["match"] = d[0]
+        data["match_seq"] = d[1].astype('int')
+
+        # Don't self-match.
+#        data = data[data['match'] != data['target']]
+        
+        # Dropping old Name columns
+        data.drop(columns =["left", "right"], inplace = True)
+        data = data.sort_values('sim', ascending = False)
+        return data
+#        return data.head(n)
+    
+    def get_nns_by_mtid(self, id, comps_per_item = 30):
+        left_set = np.array([self.matrix[self.mtid_lookup[id]]])
+        closest = self.closest(left_set, comps_per_item)
+        return [(id, neighbor, sim) for (ix, neighbor, sim) in closest]
+    
+    def get_nns_by_htid(self, htid, comps_per_item = 30):
+        ids = [id for id in self.htid_lookup[htid]]
+        left_set = np.array([self.matrix[self.mtid_lookup[id]] for id in ids])
+        closest = self.closest(left_set, comps_per_item)
+        return [(ids[ix], neighbor, sim) for (ix, neighbor, sim) in closest]
+    
+    def closest(self, left_set, comps_per_item):
+        ds = np.dot(left_set, self.matrix.T)
+        partitioned = np.argpartition(ds, -comps_per_item, axis=1)[...,-comps_per_item:]
+        neighbors = []
+        for i, row in enumerate(partitioned):
+            for item in row:
+                neighbors.append((i, self.ids[item], ds[i, item]))
+        return neighbors
+
+    def brute_cosine(self):
+        distances = np.dot(self.vectorset, self.corpus.matrix.T)
+        return distances
+
+    def neighbors(self, comps_per_item = 10, minimum_matches = 5):
+        ds = self.brute_cosine()
+        partitioned = np.argpartition(ds, -comps_per_item, axis=1)[...,-comps_per_item:]
+
+
+        arr = map(htid_ize, np.array(neighbor_names.flatten()))
+        from collections import Counter
+        commons = Counter(arr).most_common(10)
+        candidates = [c for c in commons if c[1] > minimum_matches and c[0] != self.htid]
+        return candidates        
+        
+        
     def mtid_matrix(self, mtids):
         """
         return only the n rows matching a given mtid as an nxk numpy matrix
@@ -155,3 +226,8 @@ class ChunkCollection():
         out['relation'] = element
             
         return expand_left_right(out)
+
+
+
+
+
