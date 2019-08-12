@@ -471,7 +471,7 @@ class HathiMeta():
         '''
         
         # Needs smarter logic for address bad CSV formatting
-        chunks = pd.read_csv(config['meta_path'], chunksize=25000, index_col='htid')
+        chunks = pd.read_csv(meta_path, chunksize=25000, index_col='htid')
 
         for i, chunk in enumerate(chunks):
             print(i, end=', ')
@@ -493,7 +493,7 @@ class HathiMeta():
         if not fields:
             fields = self.default_fields
         sql = single_item_template.format(self._field_call(fields), htid)
-        return pd.read_sql_query(sql, meta.engine).iloc[0]
+        return pd.read_sql_query(sql, self.engine).iloc[0]
     
     def _field_call(self, q):
         if q == '*':
