@@ -21,13 +21,9 @@ def main():
             path, filename = os.path.split(path)
 
             os.makedirs(path, exist_ok=True)
-            a = vol.tokenlist(pos=False).reset_index()
-            if a.empty:
-                continue
-            a[['page', 'token', 'count']].to_parquet(os.path.join(args.outdir, path, filename.replace('.json.bz2', '.parquet')), compression='snappy')
+            vol.save_parquet(path, token_kwargs=dict(section='body', drop_section=True, pos=False))
         except:
-            raise
-            with open('errs.txt', mode='w') as f:
+            with open('errs.txt', mode='a') as f:
                 f.write(efpath + "\n")
             print("Error", efpath)
     
