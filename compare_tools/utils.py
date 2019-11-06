@@ -470,19 +470,37 @@ class HathiMeta():
         error catching for CSV-problems should exist here.
         '''
         
-        # Needs smarter logic for address bad CSV formatting
+        # Needs smarter logic for addressing bad CSV formatting
         chunks = pd.read_csv(meta_path, chunksize=25000, index_col='htid')
 
-        for i, chunk in enumerate(chunks):
-            print(i, end=', ')
-            if i < 1:
-                chunk.to_sql('meta', self.engine, if_exists='replace')
-                self.field_list = chunk.columns.values
-            else:
-                chunk.to_sql('meta', self.engine, if_exists='append')
         with self.engine.connect() as conn:
-            res = conn.execute('CREATE INDEX meta_htid ON meta (htid);')
+            for i, chunk in enumerate(chunks):
+                print(i, end=', ')
+                if i < 1:
+                    chunk.to_sql('meta', conn, if_exists='replace')
+                    self.field_list = chunk.columns.values
+                else:
+                    chunk.to_sql('meta', conn, if_exists='append')
         
+            res = conn.execute('CREATE INDEX meta_htid ON meta (htid);')
+    
+    def extend_db(self, df):
+        ''' Add data to the metadata by passing a dataframe with htid and the 
+        new columns.'''
+        newcols = [c for c in df.columns.tolist() if c !='htid']
+        df.to_sql('tmp', self.engine, if_exists='replace', index=False)
+
+        with self.engine.connect() as conn:
+            # Left join to preserve all original rows
+            conn.execute(('CREATE TABLE tmp2 AS SELECT meta.*,{} FROM meta '
+                         'LEFT JOIN tmp ON meta.htid=tmp.htid').format(
+                             self._field_call(newcols))
+                        )
+            conn.execute('DROP TABLE meta')
+            conn.execute('DROP TABLE tmp')
+            conn.execute('ALTER TABLE tmp2 RENAME TO meta')
+
+    
     def get_volume(self, htid, fields=None):
         '''Retrieve metadata about a Volume by it's HTID number.
         
@@ -494,6 +512,14 @@ class HathiMeta():
             fields = self.default_fields
         sql = single_item_template.format(self._field_call(fields), htid)
         return pd.read_sql_query(sql, self.engine).iloc[0]
+    
+    def get_fields(self, fields=None, chunksize=None):
+        '''Retrieve full table, filtered to the fields specified or '*'. Can be chunked.
+        '''
+        if not fields:
+            fields = self.default_fields
+        sql = 'SELECT {} FROM meta'.format(self._field_call(fields))
+        return pd.read_sql_query(sql, self.engine, chunksize=chunksize)
     
     def _field_call(self, q):
         if q == '*':
@@ -508,3 +534,13 @@ class HathiMeta():
     
     def __getitem__(self, label):
         return self.get_volume(label, fields=None)
+    
+def get_json_meta(htid, parquet_root):
+    ''' Quickly read a pairtree-organized metadata file that accompanies 
+    the Parquet Feature Reader export.'''
+    from htrc_features import utils
+    import ujson as json
+    path = parquet_root + utils.id_to_rsync(htid).replace('json.bz2', 'meta.json')
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data
