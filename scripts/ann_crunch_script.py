@@ -5,29 +5,28 @@ import os
 from htrc_features import utils
 
 parser = argparse.ArgumentParser(description='Process some integers.')
-parser.add_argument('--out-dir', default='matches/', type=str, nargs='+',
+parser.add_argument('--out-dir', default='matches/', type=str,
                     help='Directory to save the file to.')
+parser.add_argument('--min-mean', default=0.3, type=float,
+                    help='Minimum mean similarity.')
+parser.add_argument('-n', '--matches-per-chunk', default=30, type=int,
+                    help='Number of matches per chunk.')
 parser.add_argument('htids', nargs='+', type=str, 
                     help='htids to process.')
 
 args = parser.parse_args()
 
-ann = MTAnnoy('testsetGlove-25trees.ann', 300)
+ann = MTAnnoy('../../ann-ef/testsetGlove-25trees.ann', 300)
 
 all_dfs = []
+
 for htid in args.htids:
     try:
-        target_length = ann.ind.loc[htid].length
-        df = ann.get_named_result_df(htid=htid, dedupe=True)
-        stats = df.groupby(['target', 'match'])['dist'].aggregate(['count', 'mean']).sort_values('count', ascending=False).reset_index(0)
-        stats = pd.merge(stats, ann.ind.loc[stats.index].length, right_index=True, left_index=True)
-        stats['prop_target'] = stats['count'] / target_length
-        stats['prop_match'] = stats['count'] / stats.length
-        stats = stats.reset_index()
+        stats = ann.doc_match_stats(htid=htid, =args.matches_per_chunk)
         
         # Testing has shown that comparisons with a greater mean distance than ~0.16 are likely 
         # not useful. To play it safe but avoid too much junk, filter where mean >0.3
-        stats = stats[stats['mean'] <= 0.3]
+        stats = stats[stats['mean'] <= args.min_mean]
         
         all_dfs.append(stats)
     except:
@@ -35,5 +34,5 @@ for htid in args.htids:
             f.write(htid)
             
 # Named after the first file in the set
-path = os.path.join('matches', '%splus%d.parquet' % (utils.clean_htid(htid),len(args.htids)-1))
+path = os.path.join(args.out_dir, '%splus%d.parquet' % (utils.clean_htid(htid),len(args.htids)-1))
 pd.concat(all_dfs).to_parquet(path, compression='snappy')

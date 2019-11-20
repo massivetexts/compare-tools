@@ -186,3 +186,20 @@ class MTAnnoy():
         df[["match_seq", "target_seq"]] = df[["match_seq", "target_seq"]].apply(pd.to_numeric)
         
         return df[['target', 'target_seq', 'match', 'match_seq', 'dist', 'rank']]
+    
+    def doc_match_stats(self, htid, n=30, max_dist=None):
+        '''
+        Return a summed DF, that reduces chunk to chunk matches to doc to doc matching statistics:
+            - count of matching chunks
+            - mean similarity for matched chunks
+            - proportion of the target that the candidate matches, and vice-versa
+        '''
+        target_length = self.ind.loc[htid].length
+        df = self.get_named_result_df(htid=htid, n=n, max_dist=max_dist, dedupe=True)
+        
+        stats = df.groupby(['target', 'match'])['dist'].aggregate(['count', 'mean']).sort_values(['count', 'mean'], ascending=False).reset_index(0)
+        stats = pd.merge(stats, self.ind.loc[stats.index].length, right_index=True, left_index=True)
+        stats['prop_target'] = stats['count'] / target_length
+        stats['prop_match'] = stats['count'] / stats.length
+        stats = stats.reset_index()
+        return stats
