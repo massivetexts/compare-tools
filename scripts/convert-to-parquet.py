@@ -1,4 +1,4 @@
-from htrc_features import FeatureReader, utils
+from htrc_features import Volume, utils
 import argparse
 import os
 
@@ -8,7 +8,7 @@ def main():
     
     parser.add_argument('--efdir', type=str, default='/data/extracted-features/', help='Location of the EF files')
     parser.add_argument('--outdir', type=str, default='/data/extracted-features-parquet/', help='Output location for parquet files.')
-    
+    parser.add_argument('--parser', type=str, default='json', help="Allows you to change the parser for the input files - e.g. if you're opening EF files that are already parquet, with the intent of chunking or lowercasing them.")
     parser.add_argument('--chunked', action='store_true', help='Whether to chunk the internal tokenlist.')
     parser.add_argument('--page-ref', action='store_true', help='Store page reference when chunking.')
     parser.add_argument('--chunk-size', type=int, default=5000, help='Word target for chunks.')
@@ -21,7 +21,7 @@ def main():
     for efpath in args.filepaths:
         
         try:
-            vol = FeatureReader(os.path.join(args.efdir, efpath)).first()
+            vol = Volume(os.path.join(args.efdir, efpath), parser=args.parser)
             path = args.outdir + utils.id_to_rsync(vol.id)
             path, filename = os.path.split(path)
 
