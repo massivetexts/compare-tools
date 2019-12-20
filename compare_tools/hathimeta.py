@@ -1,3 +1,5 @@
+import pandas as pd
+
 class HathiMeta():
     
     def __init__(self, db_path=None, default_fields='*'):
@@ -90,3 +92,13 @@ class HathiMeta():
     
     def __getitem__(self, label):
         return self.get_volume(label, fields=None)
+
+def get_json_meta(htid, parquet_root):
+    ''' Quickly read a pairtree-organized metadata file that accompanies 
+    the Parquet Feature Reader export.'''
+    from htrc_features import utils
+    import ujson as json
+    path = parquet_root + utils.id_to_rsync(htid).replace('json.bz2', 'meta.json')
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    return data

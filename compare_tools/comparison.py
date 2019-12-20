@@ -1,3 +1,8 @@
+import numpy as np
+import pandas as pd
+import altair as alt
+alt.data_transformers.enable('json')
+
 class Comparison(object):
 
     """
@@ -273,7 +278,7 @@ class Comparison(object):
 
 
 class EFComparison(Comparison):
-    def __init__(self, left, right, parquet_root = parquet_root):
+    def __init__(self, left, right, rsync_root=None, parquet_root=None):
         """
         Initialize with either an HTID object;
         or with two HTID strings.
@@ -288,8 +293,8 @@ class EFComparison(Comparison):
             self.right = right
         else:
             print("Initializing from string")
-            self.left = HTID(left, parquet_root)
-            self.right = HTID(right, parquet_root)
+            self.left = HTID(left, rsync_root=rsync_root, parquet_root=parquet_root)
+            self.right = HTID(right, rsync_root=rsync_root, parquet_root=parquet_root)
         
     
 class VectorComparison(Comparison):

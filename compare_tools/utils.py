@@ -1,22 +1,17 @@
 import os
-import pandas as pd
 from htrc_features import FeatureReader, Volume
 from htrc_features.feature_reader import group_tokenlist
 from htrc_features.utils import id_to_rsync
-import pandas as pd
 import numpy as np
 import json
 import urllib
-import altair as alt
 import warnings
 
 try:
-    from .configuration import parquet_root
+    from .configuration import rsync_root
 except:
     warnings.warn("No rsync root found")
     parquet_root = None
-
-alt.data_transformers.enable('json')
 
 def split_mtid(mtid):
     htid, seq = mtid.split('-')
@@ -111,14 +106,3 @@ class HTID(object):
     
     def _repr_html_(self):
         return self.volume._repr_html_()
-        
-    
-def get_json_meta(htid, parquet_root):
-    ''' Quickly read a pairtree-organized metadata file that accompanies 
-    the Parquet Feature Reader export.'''
-    from htrc_features import utils
-    import ujson as json
-    path = parquet_root + utils.id_to_rsync(htid).replace('json.bz2', 'meta.json')
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return data
