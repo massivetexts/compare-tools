@@ -71,6 +71,14 @@ class HathiMeta():
         sql = single_item_template.format(self._field_call(fields), htid)
         return pd.read_sql_query(sql, self.engine).iloc[0]
     
+    def random(self, fields=None):
+        ''' Return a single random volume. '''
+        random_item_template = "SELECT {} FROM meta ORDER BY RANDOM() LIMIT 1;"
+        if not fields:
+            fields = self.default_fields
+        sql = random_item_template.format(self._field_call(fields))
+        return pd.read_sql_query(sql, self.engine).iloc[0]
+    
     def get_fields(self, fields=None, chunksize=None):
         '''Retrieve full table, filtered to the fields specified or '*'. Can be chunked.
         '''
