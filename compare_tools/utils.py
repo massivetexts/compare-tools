@@ -2,6 +2,7 @@ import os
 from htrc_features import FeatureReader, Volume
 from htrc_features.feature_reader import group_tokenlist
 from htrc_features.utils import id_to_rsync
+import pandas as pd
 import numpy as np
 import json
 import urllib
@@ -83,8 +84,8 @@ class HTID(object):
         self.ef_root = ef_root
         self.ef_parser = ef_parser
         self.ef_chunk_root = ef_chunk_root
-        
-        self._metadb = self.hathimeta
+        self._metadb = hathimeta
+        self._meta = pd.Series()
         
         if vecfile:
             raise Exception("Not yet implemented!")
@@ -148,22 +149,21 @@ class HTID(object):
             try:
                 return "<strong>%s</strong>" % (self.meta['title'])
             except:
-                return htid
+                return self.htid
         
-    def meta(self):
+    def meta(self, reload=False):
         ''' Combine metadata from Hathifiles and Volumes, if available. '''
-        if not self._meta:
+        if (self._meta.empty) or reload:
             if self._metadb:
-                # call it
-                pass
+                self._meta = self._metadb[self.htid].sort_index()
 
             if (self.ef_root or self.ef_chunk_root):
-                # Retrieve meta from the reader
-                pass
+                meta2 = pd.Series(self.volume.parser.meta).sort_index()
+                if not self._meta.empty:
+                    self._meta = pd.concat([self._meta, meta2]).sort_index()
+                else:
+                    self._meta = meta2
 
-            # Merge both sources
-            # self._meta = 
-        
         return self._meta
         
         
