@@ -55,32 +55,67 @@ class MTVolume():
 
 class HTID(object):
     """
-    Initialize a volume directly from the reader files.
-
-    Essentially a wrapper around the feature reader without any iteration.
+    A wrapper around various sources of volume-level metadata and data. This
+    is for convenience - it contains little logic itself.
+    
+    Most arguments are optional - if you try to call information without the
+    necessary source, it will warn you.
     """
-    def __init__(self, htid, rsync_root=None, parquet_root=None):
+    def __init__(self, htid, ef_root=None, ef_chunk_root=None, 
+                 ef_parser='json', hathimeta=None, vecfile=None):
+        '''
+        ef_root: The root directory for Extracted Features files. Within that 
+            directory, a pairtree file structure is observed.
+        ef_chunk_root: The pairtree root directory for chunked Extracted Features
+            files. This can be retrieved from a regular unchunked volume, but if you've
+            preprocessed a chunked parquet-saved version of EF, specifying this is faster.
+        ef_parser: The parser of the EF files. Likely 'json' or 'parquet'. Parquet is
+            much quicker, if you've preprocessed the files. compare-tools/scripts/
+            convert-to-parquet.py shows an example for that conversion.
+        hathimeta: An initialized HathiMeta object. This is a DB-back metadata lookup.
+        vecfile: An initialized Vectorfile (from PySRP), which contains vector representations
+            of volumes. If you have multiple Vectorfile listings, this can be a list of 
+            (key, Vectorfile) tuples. If the vectorfiles are by page or by chunk, their keys should
+            be in the MTID notation.
+        '''
         self.htid = htid
+        
+        self.ef_root = ef_root
+        self.ef_parser = ef_parser
+        self.ef_chunk_root = ef_chunk_root
+        
+        self._metadb = self.hathimeta
+        
+        if vecfile:
+            raise Exception("Not yet implemented!")
+        
         self.reader = None
         self._volume = None
         self._tokensets = None
-        self.rsync_root = rsync_root
-        self.parquet_root =  parquet_root
-        assert self.rsync_root or self.parquet_root
       
-    @property
-    def _loc(self):
-        if self.rsync_root:
-            loc = id_to_rsync(self.htid)
-            return os.path.join(self.rsync_root, loc)
-        elif self.parquet_root: 
-            loc = id_to_rsync(self.htid).replace('.json.bz2', '')
-            return os.path.join(self.parquet_root, loc)
+    def _ef_loc(self, scope='page'):
+        loc = id_to_rsync(self.htid)
+        if scope == 'chunk' and self.ef_chunk_root:
+            loc = loc.replace('.json.bz2', '')
+            return os.path.join(self.ef_chunk_root, loc)
+        elif self.ef_root:
+            if self.ef_parser == 'parquet':
+                loc = loc.replace('.json.bz2', '')
+            return os.path.join(self.ef_root, loc)
+        else:
+            raise Exception("Not enough EF information - set ef_root or ef_chunk_root.")
+
     @property
     def volume(self):
         if not self._volume:
-            self._volume = Volume(self._loc, parser=('parquet' if self.parquet_root else 'json'))
+            self._volume = Volume(self._ef_loc(scope='page'), parser=self.ef_parser)
         return self._volume
+    
+    @property
+    def chunked_volume(self):
+        if not self._chunked_volume:
+            self._chunked_volume = Volume(self._ef_loc(scope='chunk'), parser='parquet')
+        return self._chunked_volume
 
     @property
     def page_counts(self):
@@ -105,4 +140,35 @@ class HTID(object):
         return self._tokensets
     
     def _repr_html_(self):
-        return self.volume._repr_html_()
+        if self._volume:
+            # Note that this doesn't call self.volume: it will only show
+            # the pretty HTML if a volume has already been initialized.
+            return self.volume._repr_html_()
+        else:
+            try:
+                return "<strong>%s</strong>" % (self.meta['title'])
+            except:
+                return htid
+        
+    def meta(self):
+        ''' Combine metadata from Hathifiles and Volumes, if available. '''
+        if not self._meta:
+            if self._metadb:
+                # call it
+                pass
+
+            if (self.ef_root or self.ef_chunk_root):
+                # Retrieve meta from the reader
+                pass
+
+            # Merge both sources
+            # self._meta = 
+        
+        return self._meta
+        
+        
+    def __str__(self):
+        try:
+            return "<HTRC Volume: %s - %s (%s)>" % (self.htid, self.meta['title'], self.meta['year'])
+        except:
+            return "<HTID: %s>" % self.htid
