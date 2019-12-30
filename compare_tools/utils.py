@@ -63,7 +63,7 @@ class HTID(object):
     necessary source, it will warn you.
     """
     def __init__(self, htid, ef_root=None, ef_chunk_root=None, 
-                 ef_parser='json', hathimeta=None, vecfile=None):
+                 ef_parser='json', hathimeta=None, vecfiles=None):
         '''
         ef_root: The root directory for Extracted Features files. Within that 
             directory, a pairtree file structure is observed.
@@ -74,10 +74,11 @@ class HTID(object):
             much quicker, if you've preprocessed the files. compare-tools/scripts/
             convert-to-parquet.py shows an example for that conversion.
         hathimeta: An initialized HathiMeta object. This is a DB-back metadata lookup.
-        vecfile: An initialized Vectorfile (from PySRP), which contains vector representations
-            of volumes. If you have multiple Vectorfile listings, this can be a list of 
-            (key, Vectorfile) tuples. If the vectorfiles are by page or by chunk, their keys should
-            be in the MTID notation.
+        vecfiles: An initialized Vectorfile (from PySRP), which contains vector representations
+            of volumes. You can provide just a single vectorfile, a tuple of
+            (key, Vectorfile), or a list with multiple (key, Vectorfile) tuples.
+            Currently, only vectorfiles by mtid are supported - the htid and a 
+            four character wide one-indexed integer.
         '''
         self.htid = htid
         
@@ -87,16 +88,30 @@ class HTID(object):
         self._metadb = hathimeta
         self._meta = pd.Series()
         
-        if vecfile:
-            raise Exception("Not yet implemented!")
+        if not vecfiles:
+            self._vecfiles = None
+        elif type(vecfiles) is tuple:
+            self._vecfiles = [vecfile]
+        elif type(vecfiles) is not list:
+            self._vecfiles = [('vectors'), vecfiles]
+        elif (type(vecfiles) is list) and (type(vecfiles[0]) is tuple):
+            self._vecfiles = vecfiles
+        else:
+            raise Exception("Unexpected vecfile input format")
         
         self.reader = None
         self._volume = None
+        self._chunked_volume = None
         self._tokensets = None
+        self._vecfile_cache = dict()
       
     def _ef_loc(self, scope='page'):
         loc = id_to_rsync(self.htid)
-        if scope == 'chunk' and self.ef_chunk_root:
+        if scope == 'chunk':
+            if not self.ef_chunk_root:
+                raise Exception("Can't loaded chunked_volume without ef_chunk_root param."
+                                "YOu may still be able to crunch that information from a "
+                                "regular volume")
             loc = loc.replace('.json.bz2', '')
             return os.path.join(self.ef_chunk_root, loc)
         elif self.ef_root:
@@ -105,6 +120,29 @@ class HTID(object):
             return os.path.join(self.ef_root, loc)
         else:
             raise Exception("Not enough EF information - set ef_root or ef_chunk_root.")
+
+    def vectors(self, keyfilter=None):
+        ''' Return a list of key, mtids, vectors for each available vectorfile.
+            If you are interested in just one of the vectorfiles, set keyfilter
+            to it's name. Data is internally cached.
+        '''
+        allvecs = []
+        for name, vecfile in self._vecfiles:
+            if keyfilter and (name != keyfilter):
+                continue
+            if name not in self._vecfile_cache:
+                mtids, vectors = self._get_mtid_vecs(vecfile)
+                self._vecfile_cache[name] = (mtids, vectors)
+
+            if keyfilter:
+                return self._vecfile_cache[name]
+            else:
+                mtids, vectors = self._vecfile_cache[name]
+                allvecs.append((name, mtids, vectors))
+
+        if keyfilter:
+            raise KeyError("No vecfile with that name. If you didn't specific a name, the default name is 'vectors'")
+        return allvecs
 
     @property
     def volume(self):
@@ -117,6 +155,26 @@ class HTID(object):
         if not self._chunked_volume:
             self._chunked_volume = Volume(self._ef_loc(scope='chunk'), parser='parquet')
         return self._chunked_volume
+    
+    def _get_mtid_vecs(self, vecfile):
+        ''' Retrieve mtid formatted vectors (using old htid-0001 format) from the 
+        given vectorfile.'''
+        i = 1
+        vecs = []
+        mtids = []
+        while True:
+            try:
+                mtid = '{}-{:04d}'.format(self.htid, i)
+                vecs.append(vecfile[mtid])
+                mtids.append(mtid)
+            except KeyError:
+                break
+            i += 1
+
+        if i == 1:
+            raise Exception("No matching MTIDs in the Vectorfile")
+
+        return mtids, np.vstack(vecs)
 
     @property
     def page_counts(self):
