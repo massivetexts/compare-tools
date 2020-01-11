@@ -199,11 +199,11 @@ class Comparison(object):
         if hasattr(self, "_jaccard_mat"):
             return self._jaccard_mat
         output = []
-        mat = np.full((len(self.left.tokensets), len(self.right.tokensets)), np.nan)
-        for i, (left_id, left_set) in enumerate(self.left.tokensets.iteritems()):
+        mat = np.full((len(self.left.tokensets()), len(self.right.tokensets())), np.nan)
+        for i, (left_id, left_set) in enumerate(self.left.tokensets().iteritems()):
             # Cache the left length
             left_length = len(left_set)
-            for j, (right_id, right_set) in enumerate(self.right.tokensets.iteritems()):
+            for j, (right_id, right_set) in enumerate(self.right.tokensets().iteritems()):
                 if True: # i <= j:
                     inter = len(left_set.intersection(right_set))
                     sim = inter/(len(right_set) + left_length - inter)
@@ -287,7 +287,7 @@ class EFComparison(Comparison):
 
         "parquet_root" is passed to HTID.
         """
-        if hasattr(left, "page_counts"):
+        if hasattr(left, "tokenlist"):
             print("Using HTID class")
             self.left = left
             self.right = right
@@ -296,6 +296,45 @@ class EFComparison(Comparison):
             self.left = HTID(left, rsync_root=rsync_root, parquet_root=parquet_root)
             self.right = HTID(right, rsync_root=rsync_root, parquet_root=parquet_root)
         
+class HTIDComparison(Comparison):
+    '''
+    A comparison class that assumes both EF and Vector info is provided to HTID
+    '''
+    
+    def __init__(self, left, right, labels = ['left', 'right']):
+        self.left = left
+        self.right = right
+        self._similarity_matrix = dict()
+        
+    def similarity_matrix(self, vecname='vectors', include_index=False):
+        '''
+        Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
+        it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
+        '''
+        from scipy.spatial.distance import cdist
+        
+        if (vecname not in self._similarity_matrix) or not self._similarity_matrix[vecname]:
+            leftids, leftvecs = self.left.vectors('glove')
+            rightids, rightvecs = self.right.vectors('glove')
+            sims = cdist(leftvecs, rightvecs, metric='cosine')
+            self._similarity_matrix[vecname] = dict(leftids=leftids, rightids=rightids, sims=sims)
+            
+        if include_index:
+            return (self._similarity_matrix[vecname]['leftids'],
+                    self._similarity_matrix[vecname]['leftids'],
+                    self._similarity_matrix[vecname]['sims']
+                   )
+        else:
+            return self._similarity_matrix[vecname]['sims']
+        
+    def stat_pagecounts(self):
+        lpc = self.left.meta().drop_duplicates()['page_count']
+        rpc = self.right.meta().drop_duplicates()['page_count']
+        return dict(leftpagecount=lpc,
+                    rightpagecount=rpc,
+                    pageDiff=lpc-rpc,
+                    pagePropDiff=(lpc-rpc)/lpc
+                    )
     
 class VectorComparison(Comparison):
     """
