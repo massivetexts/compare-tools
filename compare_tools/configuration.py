@@ -40,3 +40,24 @@ try:
     pca_path = config['pca_path']
 except:
     pass
+
+def init_htid_args(config):
+    ''' Using arguments from config, initialize HathiMeta and Vector_file objects
+    and return a dict that can be passed easily to HTID, expanded with **kwargs '''
+    from .hathimeta import HathiMeta
+    from SRP import Vector_file
+
+    metastore = HathiMeta(config['metadb_path'])
+    data_path_keys = [name[:-10] for name in config.keys() if name.endswith('_data_path')]
+    
+    args = dict(ef_root=config['parquet_root'],
+                ef_chunk_root=config['parquet_chunked_root'],
+                ef_parser='parquet',
+                hathimeta=metastore,
+                vecfiles=[]
+               )
+    
+    for key in data_path_keys:
+        args['vecfiles'].append((key, Vector_file(config[key+'_data_path'], mode='r')))
+        
+    return args
