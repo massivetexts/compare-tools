@@ -98,11 +98,13 @@ class HTID(object):
             self._vecfiles = vecfiles
         else:
             raise Exception("Unexpected vecfile input format")
+            
+        self.vecnames = [n for n, vfile in self._vecfiles]
         
         self.reader = None
         self._volume = None
         self._chunked_volume = None
-        self._tokensets = None
+        self._tokensets = dict(page=pd.DataFrame(), chunk=pd.DataFrame())
         self._vecfile_cache = dict()
       
     def _ef_loc(self, scope='page'):
@@ -176,27 +178,39 @@ class HTID(object):
 
         return mtids, np.vstack(vecs)
 
-    @property
-    def page_counts(self):
+    def tokenlist(self, scope='chunk', **kwargs):
         """
         Return a pandas frame with page, token, and count information.
-
-        Searches in two places before returning: first, a local cache:
-        second, an on-disk cache in the pairtree location ending with parquet.
         """
-        try:
-            return self._page_counts
-        except AttributeError:
-            pass
-        
-        return self.volume.tokenlist(case=False, pos=False)
+        if scope == 'page':
+            return self.volume.tokenlist(case=False, pos=False, **kwargs)
+        elif scope == 'chunk':
+            return self.chunked_volume.chunked_tokenlist(case=False, pos=False, 
+                                                         suppress_warning=True, **kwargs)
     
-    @property
-    def tokensets(self):
-        if self._tokensets is not None:
-            return self._tokensets
-        self._tokensets = self.page_counts.reset_index().groupby(self.volume._pagecolname).apply(lambda x: set(x['lowercase']))
-        return self._tokensets
+    def chunked_tokenlist(self, **kwargs):
+        """
+        Return a pandas frame with page, token, and count information.
+        """
+        return self.volume.chunked_tokenlist(case=False, pos=False, **kwargs)
+    
+    def tokensets(self, scope='chunk'):
+        ''' Sets of tokens per chunk/page. Scope can be pages or chunks. Chunks by default. '''
+        if not self._tokensets[scope].empty:
+            if scope == 'chunk':
+                self._tokensets['chunk'] = (self.tokenlist('chunk').reset_index()
+                                            .groupby('chunk')
+                                            .apply(lambda x: set(x['lowercase']))
+                                           )
+            elif scope == 'page':
+                self._tokensets['page'] = (self.tokenlist('page').reset_index()
+                                           .groupby(self.volume._pagecolname)
+                                           .apply(lambda x: set(x['lowercase']))
+                                          )
+            else:
+                raise Exception("Unknown scope")
+
+        return self._tokensets[scope]
     
     def _repr_html_(self):
         if self._volume:
@@ -210,7 +224,10 @@ class HTID(object):
                 return self.htid
         
     def meta(self, reload=False):
-        ''' Combine metadata from Hathifiles and Volumes, if available. '''
+        ''' Combine metadata from Hathifiles and Volumes, if available. Keys are not checked for
+        duplication - if that occurs, (e.g. two 'page_count' rows), the first is from the
+        Hathifiles and the second is from the volume.
+        '''
         if (self._meta.empty) or reload:
             if self._metadb:
                 self._meta = self._metadb[self.htid].sort_index()
