@@ -27,12 +27,11 @@ def expand_left_right(data):
     data = expand_mtid(data, 'left')
     data = expand_mtid(data, 'right') 
     return data    
-    
+
 class ChunkCollection():
     """
     This class holds an embedded set of chunks (SRP or Glove), 
     along with associated metadata
-
     """
     def __init__(self, chunk_file, metadata_file = meta_path):
         self.metadata = pd.read_csv(metadata_file, low_memory=False).set_index('htid')
@@ -130,7 +129,6 @@ class ChunkCollection():
         candidates = [c for c in commons if c[1] > minimum_matches and c[0] != self.htid]
         return candidates        
         
-        
     def mtid_matrix(self, mtids):
         """
         return only the n rows matching a given mtid as an nxk numpy matrix
@@ -195,7 +193,6 @@ class ChunkCollection():
         if format == 'matrix':
             return (ds, (left_ids, right_ids))
         return pd.DataFrame([(a, b, c) for ((a, b), c) in (zip(labs, ds.flatten()))], columns = ['left', 'right', 'sim'])
-
         
     def random_paired_distance(self, element = "random", max = 100, adjusted = False):
         """
