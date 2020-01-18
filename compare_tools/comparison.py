@@ -24,7 +24,7 @@ class Comparison(object):
         threshold: any similarities below this will be counted 
         as breaks in the alignment.
 
-        Uses the matrix at 'self.similarity_matrix', which may need to be tweaked.
+        Uses the matrix at 'self.similarity_matrix()', which may need to be tweaked.
         Note that this is a **similarity** matrix between the two sets. Must be
         a similarity matrix, *not* a distance matrix!
 
@@ -32,7 +32,7 @@ class Comparison(object):
 
         # This matrix will track the 
         # size of the longest continguous run leading to any point
-        dm = self.similarity_matrix
+        dm = self.similarity_matrix()
         sw = np.zeros_like(dm)
         
         for i in range(dm.shape[0]):
@@ -74,7 +74,7 @@ class Comparison(object):
     def assemble_sw_runs(self, mat = "similarity_matrix", threshold = 0.05, min_length = 3, min_strength = 0):
         self.build_smith_waterman_matrix(threshold)
         self.sw_copy = np.copy(self.sw_scores)
-        self.similarity_copy = np.copy(self.similarity_matrix)
+        self.similarity_copy = np.copy(self.similarity_matrix())
 
         runs = []
         run_num = 0
@@ -119,7 +119,7 @@ class Comparison(object):
             self.sw_copy = np.copy(self.sw_scores)
             
         scores = self.sw_copy
-        mat = self.similarity_matrix
+        mat = self.similarity_matrix()
         
         # Start at the end of the longest chain.
 
@@ -304,37 +304,98 @@ class HTIDComparison(Comparison):
     def __init__(self, left, right, labels = ['left', 'right']):
         self.left = left
         self.right = right
-        self._similarity_matrix = dict()
+        self._distance_matrix = dict()
+    
+    def similarity_matrix(self, vecname='vectors', include_index=False, **kwargs):
+        '''
+        Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
+        it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
         
-    def similarity_matrix(self, vecname='vectors', include_index=False):
+        Inverse of distance matrix, so ***assumes distance metric is bounded 0-1***
+        '''
+        dist = self.distance_matrix(vecname, include_index, **kwargs)
+        return 1 - dist
+        
+    def distance_matrix(self, vecname='vectors', include_index=False, **kwargs):
         '''
         Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
         it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
         '''
         from scipy.spatial.distance import cdist
         
-        if (vecname not in self._similarity_matrix) or not self._similarity_matrix[vecname]:
+        if (vecname not in self._distance_matrix) or not self._distance_matrix[vecname]:
             leftids, leftvecs = self.left.vectors('glove')
             rightids, rightvecs = self.right.vectors('glove')
             sims = cdist(leftvecs, rightvecs, metric='cosine')
-            self._similarity_matrix[vecname] = dict(leftids=leftids, rightids=rightids, sims=sims)
+            self._distance_matrix[vecname] = dict(leftids=leftids, rightids=rightids, sims=sims)
             
         if include_index:
-            return (self._similarity_matrix[vecname]['leftids'],
-                    self._similarity_matrix[vecname]['leftids'],
-                    self._similarity_matrix[vecname]['sims']
+            return (self._distance_matrix[vecname]['leftids'],
+                    self._distance_matrix[vecname]['leftids'],
+                    self._distance_matrix[vecname]['sims']
                    )
         else:
-            return self._similarity_matrix[vecname]['sims']
+            return self._distance_matrix[vecname]['sims']
         
     def stat_pagecounts(self):
-        lpc = self.left.meta().drop_duplicates()['page_count']
-        rpc = self.right.meta().drop_duplicates()['page_count']
+        lpc = self.left.meta(dedupe=True)['page_count']
+        rpc = self.right.meta(dedupe=True)['page_count']
         return dict(leftpagecount=lpc,
                     rightpagecount=rpc,
                     pageDiff=lpc-rpc,
                     pagePropDiff=(lpc-rpc)/lpc
                     )
+    
+    def stat_simmat(self):
+        simstats = dict()
+        sim = self.distance_matrix()
+
+        # For axis: Left is 1, Right is 0
+        simstats['LeftSize'], simstats['RightSize'] = sim.shape
+        simstats['minSize'] = min(sim.shape)
+        left_min_margins = sim.min(axis=1) #most similar right match for each left page
+        right_min_margins = sim.min(axis=0) # Unless looking for HTID to be reciprocal, may be unnecessary
+
+        simstats['LeftMeanMinSim'] = left_min_margins.mean()
+        simstats['RightMeanMinSim'] = right_min_margins.mean()
+        simstats['MeanSim'] = sim.mean()
+
+        # Only compare the X most similar numbers, where X is the size of the smaller margin
+        if simstats['LeftSize'] > simstats['RightSize']:
+            simstats['LeftTruncSim']= np.sort(left_min_margins)[:simstats['minSize']].mean()
+            simstats['RightTruncSim'] = simstats['RightMeanMinSim']
+        elif simstats['LeftSize'] < simstats['RightSize']:
+            simstats['RightTruncSim']= np.sort(right_min_margins)[:simstats['minSize']].mean()
+            simstats['LeftTruncSim'] = simstats['LeftMeanMinSim']
+        else:
+            simstats['RightTruncSim'] = simstats['RightMeanMinSim']
+            simstats['LeftTruncSim'] = simstats['LeftMeanMinSim']
+
+        threshold = 0.2
+        # What proportion of left pages have a matching right page with a greater similarity (i.e. lower value) than `threshold`?
+        for threshold in [0.005, 0.01, 0.03, 0.05]:
+            simstats["LeftPropThresh{:03.0f}".format(threshold*100)] = left_min_margins[left_min_margins < threshold].shape[0] / left_min_margins.shape[0]
+            
+        for threshold in [0.005, 0.01, 0.03, 0.05, 0.08]:
+            simstats["RightPropThresh{:03.0f}".format(threshold*100)] = right_min_margins[right_min_margins < threshold].shape[0] / right_min_margins.shape[0]
+        
+        return simstats
+    
+    def stat_sw(self, thresholds=[0.990, 0.995, 0.999]):
+        ''' Thresholds differ based on vector approach used'''
+        swstats = dict()
+        for threshold in thresholds:
+            self.assemble_sw_runs(threshold=threshold)
+            swstats['SW{:04.0f}Len'.format(1000-threshold*1000)] = self.runs.shape[0]
+        return swstats
+    
+    def all_stats(self):
+        allstats = dict()
+        for stat in ['pagecounts', 'sw', 'simmat']:
+            quals = getattr(self, 'stat_' + stat)()
+            allstats.update(quals)
+        allstats.update(dict(left=self.left.htid, right=self.right.htid))
+        return allstats
     
 class VectorComparison(Comparison):
     """
