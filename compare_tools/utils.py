@@ -123,10 +123,14 @@ class HTID(object):
         else:
             raise Exception("Not enough EF information - set ef_root or ef_chunk_root.")
 
-    def vectors(self, keyfilter=None):
+    def vectors(self, keyfilter=None, drop_nan=True):
         ''' Return a list of key, mtids, vectors for each available vectorfile.
             If you are interested in just one of the vectorfiles, set keyfilter
             to it's name. Data is internally cached.
+            
+            drop_nan: Drop rows that have a NaN anywere. These shouldn't be in the
+                vector files, so you can turn off the dropping in order to find 
+                upstream problems.
         '''
         allvecs = []
         for name, vecfile in self._vecfiles:
@@ -135,11 +139,17 @@ class HTID(object):
             if name not in self._vecfile_cache:
                 mtids, vectors = self._get_mtid_vecs(vecfile)
                 self._vecfile_cache[name] = (mtids, vectors)
-
+                
+            mtids, vectors = self._vecfile_cache[name]
+            
+            if drop_nan:
+                no_nan = ~np.isnan(vectors).any(axis=1)
+                mtids = mtids[no_nan]
+                vectors = vectors[no_nan]
+            
             if keyfilter:
-                return self._vecfile_cache[name]
+                return mtids, vectors
             else:
-                mtids, vectors = self._vecfile_cache[name]
                 allvecs.append((name, mtids, vectors))
 
         if keyfilter:
@@ -176,7 +186,7 @@ class HTID(object):
         if i == 1:
             raise Exception("No matching MTIDs in the Vectorfile")
 
-        return mtids, np.vstack(vecs)
+        return np.array(mtids), np.vstack(vecs)
 
     def tokenlist(self, scope='chunk', **kwargs):
         """
@@ -223,10 +233,10 @@ class HTID(object):
             except:
                 return self.htid
         
-    def meta(self, reload=False):
+    def meta(self, reload=False, dedupe=False):
         ''' Combine metadata from Hathifiles and Volumes, if available. Keys are not checked for
         duplication - if that occurs, (e.g. two 'page_count' rows), the first is from the
-        Hathifiles and the second is from the volume.
+        Hathifiles and the second (if dedupe=False) is from the volume.
         '''
         if (self._meta.empty) or reload:
             if self._metadb:
@@ -239,7 +249,10 @@ class HTID(object):
                 else:
                     self._meta = meta2
 
-        return self._meta
+        if not dedupe:
+            return self._meta
+        else:
+            return self._meta.loc[~self._meta.index.duplicated(keep='first')]
         
         
     def __str__(self):
