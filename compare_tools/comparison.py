@@ -306,7 +306,7 @@ class HTIDComparison(Comparison):
         self.right = right
         self._distance_matrix = dict()
     
-    def similarity_matrix(self, vecname='vectors', include_index=False, **kwargs):
+    def similarity_matrix(self, vecname=None, include_index=False, **kwargs):
         '''
         Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
         it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
@@ -316,16 +316,22 @@ class HTIDComparison(Comparison):
         dist = self.distance_matrix(vecname, include_index, **kwargs)
         return 1 - dist
         
-    def distance_matrix(self, vecname='vectors', include_index=False, **kwargs):
+    def distance_matrix(self, vecname=None, include_index=False, **kwargs):
         '''
         Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
         it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
         '''
         from scipy.spatial.distance import cdist
         
+        if not vecname:
+            # Choose the name of first vector_file format given to left
+            # e.g. if there is 'glove' and 'srp' in that order, choose 'glove'
+            # (better to be explicit, of course)
+            vecname = self.left._vecfiles[0][0]
+
         if (vecname not in self._distance_matrix) or not self._distance_matrix[vecname]:
-            leftids, leftvecs = self.left.vectors('glove')
-            rightids, rightvecs = self.right.vectors('glove')
+            leftids, leftvecs = self.left.vectors(vecname)
+            rightids, rightvecs = self.right.vectors(vecname)
             sims = cdist(leftvecs, rightvecs, metric='cosine')
             self._distance_matrix[vecname] = dict(leftids=leftids, rightids=rightids, sims=sims)
             
@@ -346,38 +352,32 @@ class HTIDComparison(Comparison):
                     pagePropDiff=(lpc-rpc)/lpc
                     )
     
-    def stat_simmat(self):
+    def stat_simmat(self, vecname='glove', thresholds=[0.002, 0.005, 0.01, 0.03, 0.05]):
         simstats = dict()
-        sim = self.distance_matrix()
+        sim = self.distance_matrix(vecname)
 
         # For axis: Left is 1, Right is 0
-        simstats['LeftSize'], simstats['RightSize'] = sim.shape
+        simstats['LSize'], simstats['RSize'] = sim.shape
         simstats['minSize'] = min(sim.shape)
-        left_min_margins = sim.min(axis=1) #most similar right match for each left page
-        right_min_margins = sim.min(axis=0) # Unless looking for HTID to be reciprocal, may be unnecessary
-
-        simstats['LeftMeanMinSim'] = left_min_margins.mean()
-        simstats['RightMeanMinSim'] = right_min_margins.mean()
-        simstats['MeanSim'] = sim.mean()
-
-        # Only compare the X most similar numbers, where X is the size of the smaller margin
-        if simstats['LeftSize'] > simstats['RightSize']:
-            simstats['LeftTruncSim']= np.sort(left_min_margins)[:simstats['minSize']].mean()
-            simstats['RightTruncSim'] = simstats['RightMeanMinSim']
-        elif simstats['LeftSize'] < simstats['RightSize']:
-            simstats['RightTruncSim']= np.sort(right_min_margins)[:simstats['minSize']].mean()
-            simstats['LeftTruncSim'] = simstats['LeftMeanMinSim']
-        else:
-            simstats['RightTruncSim'] = simstats['RightMeanMinSim']
-            simstats['LeftTruncSim'] = simstats['LeftMeanMinSim']
-
-        threshold = 0.2
-        # What proportion of left pages have a matching right page with a greater similarity (i.e. lower value) than `threshold`?
-        for threshold in [0.005, 0.01, 0.03, 0.05]:
-            simstats["LeftPropThresh{:03.0f}".format(threshold*100)] = left_min_margins[left_min_margins < threshold].shape[0] / left_min_margins.shape[0]
+        simstats[vecname+'MeanSim'] = sim.mean()
+        
+        for side, axis in [('L', 1), ('R', 0)]:
+            prefix = vecname + side
+            min_margins = sim.min(axis=axis) #most similar right match for each left page
             
-        for threshold in [0.005, 0.01, 0.03, 0.05, 0.08]:
-            simstats["RightPropThresh{:03.0f}".format(threshold*100)] = right_min_margins[right_min_margins < threshold].shape[0] / right_min_margins.shape[0]
+            simstats[prefix+'MeanMinSim'] = min_margins.mean()
+            
+            # Only compare the X most similar numbers, where X is the size of the smaller margin
+            if simstats[side+'Size'] > simstats['minSize']: 
+                simstats[prefix+'TruncSim']= np.sort(min_margins)[:simstats['minSize']].mean()
+            else:
+                simstats[prefix+'TruncSim'] = simstats[prefix+'MeanMinSim']
+
+            # What proportion of left pages have a matching right page
+            # with a greater similarity (i.e. lower value) than `threshold`?
+            for threshold in thresholds:
+                name = "{}PropDist{:04.0f}".format(prefix, threshold*1000)
+                simstats[name] = min_margins[min_margins < threshold].shape[0] / min_margins.shape[0]
         
         return simstats
     
@@ -391,9 +391,18 @@ class HTIDComparison(Comparison):
     
     def all_stats(self):
         allstats = dict()
-        for stat in ['pagecounts', 'sw', 'simmat']:
+        for stat in []: #['pagecounts', 'sw']:
             quals = getattr(self, 'stat_' + stat)()
             allstats.update(quals)
+        
+        quals = self.stat_sw(thresholds=[0.990, 0.995, 0.996, 0.999])
+        allstats.update(quals)
+        
+        quals = self.stat_simmat('glove', thresholds=[0.002, 0.005, 0.01, 0.02, 0.03])
+        allstats.update(quals)
+        #quals = self.stat_simmat('srp', thresholds=[0.20, 0.40, 0.60, 0.80, 0.90, 0.95, 0.99])
+        #allstats.update(quals)
+        
         allstats.update(dict(left=self.left.htid, right=self.right.htid))
         return allstats
     
