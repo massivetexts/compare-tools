@@ -110,3 +110,9 @@ def get_json_meta(htid, parquet_root):
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data
+
+def meta_compare(left_htid, right_htid, hathimeta, fields=['title', 'author', 'oclc_num', 'page_count', 'description']):
+    ''' Compare basic metadata on two books'''
+    a = hathimeta[left_htid][fields]
+    b = hathimeta[right_htid][fields]
+    return pd.DataFrame([a,b], index=['left', 'right'])

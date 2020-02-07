@@ -1,7 +1,7 @@
 import os
-from htrc_features import FeatureReader, Volume
+from htrc_features import FeatureReader, Volume, resolvers
 from htrc_features.feature_reader import group_tokenlist
-from htrc_features.utils import id_to_rsync
+from htrc_features.utils import id_to_rsync, _id_encode
 import pandas as pd
 import numpy as np
 import json
@@ -27,6 +27,51 @@ def htid_ize(mtid):
     Extract the MTID from an HTID.
     """
     return mtid.split("-")[0]
+
+
+class StubbytreeResolver(resolvers.IdResolver):
+    '''
+    An alternative to pairtree that uses loc/code, where the code is every third digit of the ID.
+    '''
+    def __init__(self, dir=None, **kwargs):
+        if not dir:
+            raise NameError("You must specify a directory with 'dir'")
+        super().__init__(dir=dir, **kwargs)
+            
+    def id_to_stubbytree(self, htid, format = None, suffix = None, compression = None):
+        '''
+        Take an HTRC id and convert it to a 'stubbytree' location.
+
+        '''
+        libid, volid = htid.split('.', 1)
+        volid_clean = _id_encode(volid)
+        clean_htid = '.'.join([libid, volid_clean])
+
+        suffixes = [s for s in [format, compression] if s is not None]
+        filename = ".".join([clean_htid, *suffixes]) 
+        
+        path = os.path.join(libid, volid_clean[::3], filename)
+
+        return path
+        
+    def _open(self, id, mode = 'rb', format=None, compression='default', suffix=None, **kwargs):
+        assert(mode.endswith('b'))
+        
+        if not format:
+            format = self.format
+        if compression == 'default':
+            compression = self.compression
+
+        path = self.id_to_stubbytree(id, format, suffix, compression)
+        full_path = resolvers.Path(self.dir, path)
+        try:
+            return full_path.open(mode=mode)
+        except FileNotFoundError:
+            if mode.startswith('w'):
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+                return full_path.open(mode=mode)
+            else:
+                raise
 
 
 class MTVolume():
