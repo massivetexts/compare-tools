@@ -45,14 +45,13 @@ def init_htid_args(config):
     ''' Using arguments from config, initialize HathiMeta and Vector_file objects
     and return a dict that can be passed easily to HTID, expanded with **kwargs '''
     from .hathimeta import HathiMeta
+    from .resolver import my_resolver
     from SRP import Vector_file
 
     metastore = HathiMeta(config['metadb_path'])
     data_path_keys = [name[:-10] for name in config.keys() if name.endswith('_data_path')]
     
-    args = dict(ef_root=config['parquet_root'],
-                ef_chunk_root=config['parquet_chunked_root'],
-                ef_parser='parquet',
+    args = dict(id_resolver=my_resolver,
                 hathimeta=metastore,
                 vecfiles=[]
                )

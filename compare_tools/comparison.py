@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 import altair as alt
+from collections import Counter
 alt.data_transformers.enable('json')
+from .utils import HTID
 
 class Comparison(object):
 
@@ -17,7 +19,7 @@ class Comparison(object):
         self.left = left
         self.right = right
 
-    def build_smith_waterman_matrix(self, threshold):
+    def build_smith_waterman_matrix(self, threshold, metric, **kwargs):
         """
         Build a cumulative Smith-Waterman distance matrix to find contiguous runs.
 
@@ -32,7 +34,7 @@ class Comparison(object):
 
         # This matrix will track the 
         # size of the longest continguous run leading to any point
-        dm = self.similarity_matrix()
+        dm = self.similarity_matrix(metric = metric, **kwargs)
         sw = np.zeros_like(dm)
         
         for i in range(dm.shape[0]):
@@ -55,10 +57,10 @@ class Comparison(object):
         self.sw_scores = sw
         return self.sw_scores
     
-    def yield_sw_runs(self, threshold, no_joined_chunks = True):
+    def yield_sw_runs(self, threshold, no_joined_chunks = True, **kwargs):
         self.sw_copy = np.copy(self.sw_scores)
         while True:
-            next_up = self.return_top_sw_sequence_and_remove_from_matrix(threshold)
+            next_up = self.return_top_sw_sequence_and_remove_from_matrix(threshold, **kwargs)
             if next_up is None:
                 # We've exhausted the supply of matches.
                 break
@@ -71,14 +73,15 @@ class Comparison(object):
                     yield next_up[:-1]
             yield next_up
 
-    def assemble_sw_runs(self, mat = "similarity_matrix", threshold = 0.05, min_length = 3, min_strength = 0):
-        self.build_smith_waterman_matrix(threshold)
+    def assemble_sw_runs(self, mat = "similarity_matrix", threshold = 0.05, min_length = 3, min_strength = 0, metric = 'cosine', **kwargs):
+        
+        self.build_smith_waterman_matrix(threshold, metric = metric, **kwargs)
         self.sw_copy = np.copy(self.sw_scores)
-        self.similarity_copy = np.copy(self.similarity_matrix())
+        self.similarity_copy = np.copy(self.similarity_matrix(metric = metric, **kwargs))
 
         runs = []
         run_num = 0
-        for run in self.yield_sw_runs(threshold):
+        for run in self.yield_sw_runs(threshold, metric = metric, **kwargs):
             if run is None:
                 # The iteration was stopped.
                 break
@@ -103,7 +106,7 @@ class Comparison(object):
         self.runs['right_htid'] = self.right_htid
         self.runs.to_csv(output, mode="a", header = False, index = False)
         
-    def return_top_sw_sequence_and_remove_from_matrix(self, threshold):
+    def return_top_sw_sequence_and_remove_from_matrix(self, threshold, **kwargs):
         """
         This code does two things.
 
@@ -119,7 +122,7 @@ class Comparison(object):
             self.sw_copy = np.copy(self.sw_scores)
             
         scores = self.sw_copy
-        mat = self.similarity_matrix()
+        mat = self.similarity_matrix(**kwargs)
         
         # Start at the end of the longest chain.
 
@@ -188,34 +191,60 @@ class Comparison(object):
             
         return l        
 
-    @property
-    def jaccard_matrix(self, document = "seq"):
+    def jaccard_matrix(self, scope = 'page', drop_common = 200):
         """
         Return pairwise jaccard similarities across pages.
 
+        Drops the 200 most common tokens.
+
         'document': The column in the initialized dataframe containing page-level info. 
         """
-
+    
         if hasattr(self, "_jaccard_mat"):
-            return self._jaccard_mat
+            try:
+                return self._jaccard_mat[scope]
+            except:
+                pass
+        else:
+            self._jaccard_mat = {}
         output = []
-        mat = np.full((len(self.left.tokensets()), len(self.right.tokensets())), np.nan)
-        for i, (left_id, left_set) in enumerate(self.left.tokensets().iteritems()):
+        lset, rset = self.left.tokensets(scope), self.right.tokensets(scope)
+        mat = np.full((len(lset), len(rset)), np.nan)
+
+
+        # Remove words from docs that are among the 200 most common
+        counts = Counter()
+        for myset in [lset, rset]:
+            for section in myset:
+                for word in section:
+                    counts[word] += 1
+                    
+        dropping = set([word for word, count in counts.most_common(drop_common)])
+        
+        for myset in [lset, rset]:
+            for section in myset:
+                section -= dropping
+
+                
+        for i, (left_id, left_set) in enumerate(self.left.tokensets(scope).iteritems()):
             # Cache the left length
             left_length = len(left_set)
-            for j, (right_id, right_set) in enumerate(self.right.tokensets().iteritems()):
+            for j, (right_id, right_set) in enumerate(self.right.tokensets(scope).iteritems()):
                 if True: # i <= j:
                     inter = len(left_set.intersection(right_set))
-                    sim = inter/(len(right_set) + left_length - inter)
+                    t = (len(right_set) + left_length - inter)
+                    if t == 0:
+                        t = 1
+                    sim = inter/t
                     mat[i, j] = sim
 #                    mat[j, i] = sim
                     
-        self._jaccard_mat = mat
-        self.similarity_matrix = mat
+        self._jaccard_mat[scope] = mat
+#        self.similarity_matrix = mat
         return mat
 
     def plot(self, which = None, ids = None, runs = None, filter = None, width = 500,
-             height = 500, scale_domain= None):
+             height = 500, scale_domain= None, **kwargs):
         '''
         
         scale_domain: an optional 'domain' argument to Altair's color scale. Use 'unaggregated'
@@ -225,7 +254,7 @@ class Comparison(object):
         if which is None:
             which = "similarity_matrix"
         
-        mat = getattr(self, which)
+        mat = getattr(self, which)(**kwargs)
 
         vals = []
 
@@ -264,7 +293,7 @@ class Comparison(object):
         )
 
         charts = [grid]
-        if runs is not None:
+        if runs:
             run_chart = alt.Chart(self.runs).encode(
                 x = "left_seq:O",
                 y = "right_seq:O",
@@ -275,6 +304,101 @@ class Comparison(object):
             charts.append(run_chart)
             
         return alt.layer(*charts).properties(height=600, width=600)
+
+    def jaccard_stats(self, scope):
+
+        # Needed to initialize the matrix.
+        _ = self.jaccard_matrix(scope = scope)
+        self.runs = None
+
+        self.assemble_sw_runs(threshold=.2, scope = scope, metric = 'jaccard')
+        m = self.jaccard_matrix(scope = scope)
+
+        jaccard_scores = dict(
+            mean_page_diff = (self.runs.left_seq - self.runs.right_seq).abs().mean()
+            , sd_page_diff = (self.runs.left_seq - self.runs.right_seq).abs().std()
+            , mean_similarity_inside_runs = self.runs.sim.mean()
+            , mean_similarity_to_right_of_runs = np.mean(m[self.runs.left_seq, self.runs.right_seq - 1])
+            , share_l_in_r = len(self.runs.right_seq.unique())/self.jaccard_matrix(scope = scope).shape[1]
+            , share_r_in_l = len(self.runs.left_seq.unique())/self.jaccard_matrix(scope = scope).shape[0]
+        )
+        if scope=='page':
+            jaccard_scores.update(self.slopes())
+            jaccard_scores.update(self.four_points())
+        return jaccard_scores
+
+    def slopes(self):
+        """
+        Get the slopes of run lines both looking in wordcount space (wheere SWDE should be equivalent unless there are footnotes) and
+        in pagecount space (where same manifestations should always hes ave a slope of 1, and variation from that indicates definite 
+        different pagination.
+
+        This code is a pain because
+
+        1. I hate hate hate pandas indexes. Just hate them. Indexes and columns should be the same thing. I hate pandas and python so much compared to R.
+           How does pandas manage to be both far more verbose than R and also far less clear?
+        2. More seriously, because there are multiple runs, and we need a sound way to aggregate across them.
+           So I take the average slope within runs, and weight by the number of words or pages in the shorter of left or right.
+
+        Currently, this will really only work on page-level counts.
+        """
+        z = self.left.tokenlist('page').reset_index().groupby('page').sum().cumsum().rename(columns={'count': 'left_count'})
+        z.index = z.index.rename('left_seq')
+
+        y = self.right.tokenlist('page').reset_index().groupby('page').sum().cumsum().rename(columns={'count': 'right_count'})
+        y.index = y.index.rename('right_seq')
+
+        runs = self.runs.reset_index().set_index('left_seq').join(z).reset_index().set_index('right_seq').join(y).reset_index()
+        #page_slope = (runs.left_count[0] - self.runs.left_seq.values[-1])/(self.runs.right_seq[0] - self.runs.right_seq.values[-1])
+        grouped = runs.groupby("run_num").agg(['min', 'max'])
+        deltas = []
+        for metric in ['seq', 'count']:
+            delta = []
+            for which in ['left', 'right']:
+                e = grouped[f"{which}_{metric}"].copy()
+                e['which'] = which
+                e['metric'] = metric
+                e['range'] = e['max'] - e['min']
+                deltas.append(e)
+        #    slopes['run_' + metric + '_slope'] = (delta[0]/delta[1])[0]
+
+        all = pd.concat(deltas).reset_index().drop(columns=['min', 'max']).set_index(['run_num', 'metric']).pivot(columns='which').reset_index()
+
+        all['weights'] = all['range'][['left', 'right']].mean(axis=1)
+        all['slope'] = all['range']['left']/all['range']['right']
+        all['weighted_slope'] = all['slope'] * all['weights']
+        summed = all.groupby('metric').agg('sum')
+        summed['slope'] = summed['weighted_slope']/summed['weights']
+        summed.loc['count']['slope'][0]
+
+        from sklearn.linear_model import LinearRegression
+        X = self.runs.left_seq.values.reshape(-1, 1)
+        y = self.runs.right_seq
+        reg = LinearRegression().fit(X, y)
+        overall_slope = reg.coef_[0]
+        
+        return dict(
+            overall_slope = overall_slope,
+            strength_of_overall_fit= reg.score(X, y),
+            weighted_in_run_page_slope = all.groupby('metric')['slope'].mean().loc['seq'],
+            weighted_in_run_word_slope = all.groupby('metric')['slope'].mean().loc['count']
+        )
+    
+    def four_points(self, raw_data = False):
+        m = self.jaccard_matrix(scope='page')
+        flat = m.flatten() * -1
+        shorter = min(*m.shape)
+        flat.sort()
+        flat *= -1
+        flat = flat[:shorter*4]
+        if raw_data:
+            return flat
+        return dict(
+            sim_at_quarter_length = flat[shorter//4]
+            , sim_at_half_length = flat[shorter//2]
+            , sim_at_full_length = flat[shorter//1]
+            , sim_at_double_length = flat[shorter*2]
+        )
 
 
 class EFComparison(Comparison):
@@ -299,21 +423,38 @@ class EFComparison(Comparison):
 class HTIDComparison(Comparison):
     '''
     A comparison class that assumes both EF and Vector info is provided to HTID
+    
+
     '''
     
-    def __init__(self, left, right, labels = ['left', 'right']):
-        self.left = left
-        self.right = right
+    def __init__(self, left = None, right = None, labels = ['left', 'right'], ids = None, **kwargs):
+        if ids is not None:
+            assert(len(ids)==2)
+            self.left = HTID(ids[0], **kwargs)
+            self.right = HTID(ids[1], **kwargs)
+        else:
+            self.left = left
+            self.right = right
         self._distance_matrix = dict()
+
+    def _repr_html_(self):
+        return f"""<em>Comparison object</em> between <ol>
+        <li>{self.left._repr_html_()}</li>
+        <li>{self.right._repr_html_()}</li>
+        </ol>
+        """
     
-    def similarity_matrix(self, vecname=None, include_index=False, **kwargs):
+    def similarity_matrix(self, vecname=None, include_index=False, metric='cosine', **kwargs):
         '''
         Vecname refers to the name of the Vector_file in HTID. If unnamed, HTID calls
         it 'vectors'. 'glove' and 'srp' are used for the SaDDL project.
         
-        Inverse of distance matrix, so ***assumes distance metric is bounded 0-1***
+        Uses 1 - distance matrix as a shortcut.
         '''
-        dist = self.distance_matrix(vecname, include_index, **kwargs)
+        if metric == 'cosine':
+            dist = self.distance_matrix(vecname, include_index, **kwargs)
+        if metric == 'jaccard':
+            return self.jaccard_matrix(**kwargs)
         return 1 - dist
         
     def distance_matrix(self, vecname=None, include_index=False, **kwargs):
@@ -430,4 +571,4 @@ class VectorComparison(Comparison):
             left, right,
             format='matrix', adjusted = adjusted)
 
-        self.similarity_matrix = mat
+#        self.similarity_matrix = mat

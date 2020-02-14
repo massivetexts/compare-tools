@@ -7,6 +7,7 @@ import numpy as np
 import json
 import urllib
 import warnings
+from pathlib import Path
 
 try:
     from .configuration import rsync_root
@@ -38,19 +39,15 @@ class StubbytreeResolver(resolvers.IdResolver):
             raise NameError("You must specify a directory with 'dir'")
         super().__init__(dir=dir, **kwargs)
             
-    def id_to_stubbytree(self, htid, format = None, suffix = None, compression = None):
+    def id_to_stubbydir(self, htid):
         '''
         Take an HTRC id and convert it to a 'stubbytree' location.
 
         '''
         libid, volid = htid.split('.', 1)
         volid_clean = _id_encode(volid)
-        clean_htid = '.'.join([libid, volid_clean])
 
-        suffixes = [s for s in [format, compression] if s is not None]
-        filename = ".".join([clean_htid, *suffixes]) 
-        
-        path = os.path.join(libid, volid_clean[::3], filename)
+        path = os.path.join(libid, volid_clean[::3])
 
         return path
         
@@ -62,8 +59,9 @@ class StubbytreeResolver(resolvers.IdResolver):
         if compression == 'default':
             compression = self.compression
 
-        path = self.id_to_stubbytree(id, format, suffix, compression)
-        full_path = resolvers.Path(self.dir, path)
+        path = self.id_to_stubbydir(id, format, suffix, compression)
+        fname = self.fname(id, format= format, suffix = suffix, compression = compression)
+        full_path = Path(self.dir, path, fname)
         try:
             return full_path.open(mode=mode)
         except FileNotFoundError:
@@ -107,17 +105,12 @@ class HTID(object):
     Most arguments are optional - if you try to call information without the
     necessary source, it will warn you.
     """
-    def __init__(self, htid, ef_root=None, ef_chunk_root=None, 
-                 ef_parser='json', hathimeta=None, vecfiles=None):
+    def __init__(self, htid, id_resolver, chunked_resolver = None, hathimeta=None, vecfiles=None):
         '''
-        ef_root: The root directory for Extracted Features files. Within that 
-            directory, a pairtree file structure is observed.
-        ef_chunk_root: The pairtree root directory for chunked Extracted Features
+        id_resolver: An IdResolver for Extracted Features files.
+        chunked_resolver: An IdResolver chunked Extracted Features
             files. This can be retrieved from a regular unchunked volume, but if you've
             preprocessed a chunked parquet-saved version of EF, specifying this is faster.
-        ef_parser: The parser of the EF files. Likely 'json' or 'parquet'. Parquet is
-            much quicker, if you've preprocessed the files. compare-tools/scripts/
-            convert-to-parquet.py shows an example for that conversion.
         hathimeta: An initialized HathiMeta object. This is a DB-back metadata lookup.
         vecfiles: An initialized Vectorfile (from PySRP), which contains vector representations
             of volumes. You can provide just a single vectorfile, a tuple of
@@ -126,15 +119,16 @@ class HTID(object):
             four character wide one-indexed integer.
         '''
         self.htid = htid
-        
-        self.ef_root = ef_root
-        self.ef_parser = ef_parser
-        self.ef_chunk_root = ef_chunk_root
+        self.id_resolver = id_resolver
+        if chunked_resolver is None:
+            self.chunked_resolver = id_resolver
+        else:
+            self.chunked_resolver = chunked_resolver
         self._metadb = hathimeta
         self._meta = pd.Series()
         
         if not vecfiles:
-            self._vecfiles = None
+            self._vecfiles = []
         elif type(vecfiles) is tuple:
             self._vecfiles = [vecfile]
         elif type(vecfiles) is not list:
@@ -151,22 +145,6 @@ class HTID(object):
         self._chunked_volume = None
         self._tokensets = dict(page=pd.DataFrame(), chunk=pd.DataFrame())
         self._vecfile_cache = dict()
-      
-    def _ef_loc(self, scope='page'):
-        loc = id_to_rsync(self.htid)
-        if scope == 'chunk':
-            if not self.ef_chunk_root:
-                raise Exception("Can't loaded chunked_volume without ef_chunk_root param."
-                                "YOu may still be able to crunch that information from a "
-                                "regular volume")
-            loc = loc.replace('.json.bz2', '')
-            return os.path.join(self.ef_chunk_root, loc)
-        elif self.ef_root:
-            if self.ef_parser == 'parquet':
-                loc = loc.replace('.json.bz2', '')
-            return os.path.join(self.ef_root, loc)
-        else:
-            raise Exception("Not enough EF information - set ef_root or ef_chunk_root.")
 
     def vectors(self, keyfilter=None, drop_nan=True):
         ''' Return a list of key, mtids, vectors for each available vectorfile.
@@ -204,13 +182,13 @@ class HTID(object):
     @property
     def volume(self):
         if not self._volume:
-            self._volume = Volume(self._ef_loc(scope='page'), parser=self.ef_parser)
+            self._volume = Volume(self.htid, id_resolver = self.id_resolver)
         return self._volume
     
     @property
     def chunked_volume(self):
         if not self._chunked_volume:
-            self._chunked_volume = Volume(self._ef_loc(scope='chunk'), parser='parquet')
+            self._chunked_volume = Volume(self.htid, id_resolver = self.chunked_resolver)
         return self._chunked_volume
     
     def _get_mtid_vecs(self, vecfile):
@@ -229,7 +207,7 @@ class HTID(object):
             i += 1
 
         if i == 1:
-            raise Exception("No matching MTIDs in the Vectorfile")
+            raise Exception("Got to work with the new format using the new code... hold on.")
 
         return np.array(mtids), np.vstack(vecs)
 
@@ -240,7 +218,7 @@ class HTID(object):
         if scope == 'page':
             return self.volume.tokenlist(case=False, pos=False, **kwargs)
         elif scope == 'chunk':
-            return self.chunked_volume.chunked_tokenlist(case=False, pos=False, 
+            return self.chunked_volume.tokenlist(case=False, pos=False, chunk = True, 
                                                          suppress_warning=True, **kwargs)
     
     def chunked_tokenlist(self, **kwargs):
@@ -251,7 +229,7 @@ class HTID(object):
     
     def tokensets(self, scope='chunk'):
         ''' Sets of tokens per chunk/page. Scope can be pages or chunks. Chunks by default. '''
-        if not self._tokensets[scope].empty:
+        if self._tokensets[scope].empty:
             if scope == 'chunk':
                 self._tokensets['chunk'] = (self.tokenlist('chunk').reset_index()
                                             .groupby('chunk')
@@ -287,13 +265,17 @@ class HTID(object):
             if self._metadb:
                 self._meta = self._metadb[self.htid].sort_index()
 
-            if (self.ef_root or self.ef_chunk_root):
+            try:
                 meta2 = pd.Series(self.volume.parser.meta).sort_index()
                 if not self._meta.empty:
                     self._meta = pd.concat([self._meta, meta2]).sort_index()
                 else:
                     self._meta = meta2
-
+            except:
+                pass
+        if not "page_count" in self._meta:
+            self._meta["page_count"] = 1
+                
         if not dedupe:
             return self._meta
         else:
