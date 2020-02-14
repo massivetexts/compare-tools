@@ -105,10 +105,10 @@ class HTID(object):
     Most arguments are optional - if you try to call information without the
     necessary source, it will warn you.
     """
-    def __init__(self, htid, id_resolver, chunked_resolver = None, hathimeta=None, vecfiles=None):
+    def __init__(self, htid, id_resolver, chunk_resolver = None, hathimeta=None, vecfiles=None):
         '''
         id_resolver: An IdResolver for Extracted Features files.
-        chunked_resolver: An IdResolver chunked Extracted Features
+        chunk_resolver: An IdResolver to chunked Extracted Features
             files. This can be retrieved from a regular unchunked volume, but if you've
             preprocessed a chunked parquet-saved version of EF, specifying this is faster.
         hathimeta: An initialized HathiMeta object. This is a DB-back metadata lookup.
@@ -120,10 +120,10 @@ class HTID(object):
         '''
         self.htid = htid
         self.id_resolver = id_resolver
-        if chunked_resolver is None:
+        if chunk_resolver is None:
             self.chunked_resolver = id_resolver
         else:
-            self.chunked_resolver = chunked_resolver
+            self.chunked_resolver = chunk_resolver
         self._metadb = hathimeta
         self._meta = pd.Series()
         
