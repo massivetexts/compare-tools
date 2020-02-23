@@ -2,26 +2,38 @@ import os
 from htrc_features import FeatureReader, Volume, resolvers
 from htrc_features.feature_reader import group_tokenlist
 from htrc_features.utils import id_to_rsync, _id_encode
+from .wem_hook import WEM_transform
 import pandas as pd
 import numpy as np
 import json
 import urllib
 import warnings
 from pathlib import Path
+import uuid
+from SRP import Vector_file
+import SRP
+from .configuration import config
+
+# These are global lists to allow thread-safe creation of new vectorfiles..
+# They'll be filled inside processes.
+vector_files = {
+    'SRP':[],
+    'glove': []
+}
 
 try:
     from .configuration import rsync_root
 except:
     warnings.warn("No rsync root found")
+    # I don't think I wrote this; but I'm not sure this necessarily follows? --BMS
     parquet_root = None
 
 def split_mtid(mtid):
-    htid, seq = mtid.split('-')
+    htid, seq, start, end = mtid.split('-')
     seq = int(seq)
-    return htid, seq
-    
-def join_mtid(htid, seq):
-    return "%s-%04.f" % (htid, seq)
+    start = int(start)
+    end = int(end)
+    return htid, seq, start, end
 
 def htid_ize(mtid):
     """
@@ -29,7 +41,40 @@ def htid_ize(mtid):
     """
     return mtid.split("-")[0]
 
+hasher = None
+def SRP_transform(f):
+    global hasher
+    if hasher is None:
+        hasher = SRP.SRP(640)
+    return hasher.stable_transform(words = f['token'], counts = f['count'], log = True, standardize = True)
 
+def supplement_vectors(volume, *vector_files):
+    print("Supplementing")
+    # Takes a volume and any number of vector files.
+    
+    chunks = volume.tokenlist(chunk = True, chunk_size = 10000, overflow = 'ends', pos=False, page_ref = True)
+    chunks.reset_index(level = 3, inplace = True)
+    if chunks.empty:
+        return
+    my_chunks = []
+    for (chunk, start, end) in set(chunks.index):
+        my_chunks.append((volume.id, chunk, start, end, chunks.loc[(chunk, start, end)].reset_index(drop = True)))
+    for file in vector_files:
+        assert file.mode in ["a", "w"]
+        if file.dims == 300:
+            vtype = "glove"
+        elif file.dims == 640:
+            vtype = "SRP"
+        else:
+            raise NotImplementedError(f"Not sure how to handle a vector file like {file}")
+        for (htid, chunk, start, end, group) in my_chunks:                                  
+            mtid = "{}-{:04d}-{}-{}".format(htid, chunk, start, end)
+            if vtype == "glove":
+                file.add_row(mtid, WEM_transform(group).astype("<f4"))
+            elif vtype=="SRP":
+                file.add_row(mtid, SRP_transform(group))
+        file.flush()
+        
 class StubbytreeResolver(resolvers.IdResolver):
     '''
     An alternative to pairtree that uses loc/code, where the code is every third digit of the ID.
@@ -139,7 +184,7 @@ class HTID(object):
             raise Exception("Unexpected vecfile input format")
             
         self.vecnames = [n for n, vfile in self._vecfiles]
-        
+
         self.reader = None
         self._volume = None
         self._chunked_volume = None
@@ -156,11 +201,11 @@ class HTID(object):
                 upstream problems.
         '''
         allvecs = []
-        for name, vecfile in self._vecfiles:
+        for name, _ in self._vecfiles:
             if keyfilter and (name != keyfilter):
                 continue
             if name not in self._vecfile_cache:
-                mtids, vectors = self._get_mtid_vecs(vecfile)
+                mtids, vectors = self._get_mtid_vecs(name)
                 self._vecfile_cache[name] = (mtids, vectors)
                 
             mtids, vectors = self._vecfile_cache[name]
@@ -179,6 +224,9 @@ class HTID(object):
             raise KeyError("No vecfile with that name. If you didn't specific a name, the default name is 'vectors'")
         return allvecs
 
+
+            
+    
     @property
     def volume(self):
         if not self._volume:
@@ -191,25 +239,49 @@ class HTID(object):
             self._chunked_volume = Volume(self.htid, id_resolver = self.chunked_resolver)
         return self._chunked_volume
     
-    def _get_mtid_vecs(self, vecfile):
-        ''' Retrieve mtid formatted vectors (using old htid-0001 format) from the 
+    def _get_mtid_vecs(self, format):
+        ''' Retrieve mtid formatted vectors (using htid-0001-3-5 format) from the 
         given vectorfile.'''
-        i = 1
+
         vecs = []
         mtids = []
-        while True:
-            try:
-                mtid = '{}-{:04d}'.format(self.htid, i)
-                vecs.append(vecfile[mtid])
-                mtids.append(mtid)
-            except KeyError:
-                break
-            i += 1
+        global vector_files
+        
+        original_file = Path(config[f"{format}_data_path"])
+        
+        if len(vector_files[format]) == 0:
+            related_files = [l for l in (original_file.parent)\
+                             .glob(original_file.stem + "*.bin")]
+            vector_files[format] = [SRP.Vector_file(f, mode = 'r') for f in related_files]
+            assert(len(vector_files[format]) > 0)
+            
+        vals = []
+        for f in vector_files[format]:
+            for mtid, vec in f.find_prefix(self.htid, "-"):
+                vals.append((mtid, vec))
+        vals.sort()
+        
+        if len(vals) > 0:
+            mtids, vecs = zip(*vals)
+            return np.array(mtids), np.vstack(vecs)
 
-        if i == 1:
-            raise Exception("Got to work with the new format using the new code... hold on.")
+        try:
+            writable = [f for f in vector_files[format] if f.mode=='a'][0]
+        except IndexError:
+            suffix = uuid.uuid4().hex[:8]
+            fname = Path(original_file.parent, original_file.stem + "-" + suffix + ".bin")
+            writable = SRP.Vector_file(fname, mode = 'a', dims = vector_files[format][0].dims)
+            vector_files[format].append(writable)
 
+        supplement_vectors(self.volume, writable)
+
+        # It just shouldn't be very expensive to do the lookup after doing the write
+        # given how expensive the whole process is.
+        mtids, vecs = zip(*writable.find_prefix(self.htid, "-"))        
         return np.array(mtids), np.vstack(vecs)
+            
+
+
 
     def tokenlist(self, scope='chunk', **kwargs):
         """

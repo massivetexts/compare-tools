@@ -4,7 +4,7 @@ import altair as alt
 from collections import Counter
 alt.data_transformers.enable('json')
 from .utils import HTID
-
+import warnings
 class Comparison(object):
 
     """
@@ -376,7 +376,8 @@ class Comparison(object):
         y = self.runs.right_seq
         reg = LinearRegression().fit(X, y)
         overall_slope = reg.coef_[0]
-        
+
+
         return dict(
             overall_slope = overall_slope,
             strength_of_overall_fit= reg.score(X, y),
@@ -427,7 +428,7 @@ class HTIDComparison(Comparison):
 
     '''
     
-    def __init__(self, left = None, right = None, labels = ['left', 'right'], ids = None, **kwargs):
+    def __init__(self, left = None, right = None, labels = ['left', 'right'], ids = None, adjust_similarity = False, **kwargs):
         if ids is not None:
             assert(len(ids)==2)
             self.left = HTID(ids[0], **kwargs)
@@ -435,6 +436,7 @@ class HTIDComparison(Comparison):
         else:
             self.left = left
             self.right = right
+        self.adjusted = adjust_similarity
         self._distance_matrix = dict()
 
     def _repr_html_(self):
@@ -473,6 +475,12 @@ class HTIDComparison(Comparison):
         if (vecname not in self._distance_matrix) or not self._distance_matrix[vecname]:
             leftids, leftvecs = self.left.vectors(vecname)
             rightids, rightvecs = self.right.vectors(vecname)
+            print(leftids)
+            if self.adjusted:
+                lmean = np.mean(leftvecs, axis = 0)
+                rmean = np.mean(rightvecs, axis = 0)
+                leftvecs -= (lmean + rmean)/2
+                rightvecs -= (lmean + rmean)/2
             sims = cdist(leftvecs, rightvecs, metric='cosine')
             self._distance_matrix[vecname] = dict(leftids=leftids, rightids=rightids, sims=sims)
             
@@ -493,7 +501,8 @@ class HTIDComparison(Comparison):
                     pagePropDiff=(lpc-rpc)/lpc
                     )
     
-    def stat_simmat(self, vecname='glove', thresholds=[0.002, 0.005, 0.01, 0.03, 0.05]):
+    def stat_simmat(self, vecname='glove', thresholds=[0.002, 0.005, 0.01, 0.03, 0.05],  adjusted = False):
+        self.adjusted = adjusted
         simstats = dict()
         sim = self.distance_matrix(vecname)
 

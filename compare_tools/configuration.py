@@ -3,13 +3,21 @@ import os
 from pathlib import Path
 
 config = {}
-# Looks for a file named "local.yaml" in the current directory or higher in the directory tree.
 
+# Looks for a file named "local.yaml" in the current directory or higher in the directory tree,
+# or at '.htrc_config.yaml'.
+
+used = []
+pathset = []
+    
 for depth in range(7):
     for fname in ['local.yaml', '.htrc-config.yaml']:
-        path = Path('../' * depth, fname)
-        if path.exists():
-            config.update(yaml.safe_load(open(path)))
+        pathset.append(Path('../' * depth, fname))
+pathset.append(Path("~/.htrc-config.yaml").expanduser())
+for path in pathset:
+    if path.exists():
+        used.append(path)
+        config.update(yaml.safe_load(open(path)))
 
 # Some of these can be imported directly, if they're there.
 try:
@@ -102,6 +110,6 @@ def init_htid_args(config):
                )
     
     for key in data_path_keys:
-        args['vecfiles'].append((key, Vector_file(config[key+'_data_path'], mode='r')))
+        args['vecfiles'].append((key, Vector_file(config[key+'_data_path'], mode='a')))
         
     return args
