@@ -70,7 +70,7 @@ pytoml==0.1.18
 pytz==2019.1
 pyudev==0.15
 pyxattr==0.5.1
-PyYAML==3.10
+PyYAML==5.1
 registries==0.1
 requests==2.21.0
 requests-oauthlib==1.0.0
