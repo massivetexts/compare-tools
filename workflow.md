@@ -37,6 +37,8 @@ The raw token counts for books are not particularly useful. The first step in th
 - Approach 1: **GloVe** is a pre-trained language model, which seeks to reduce language to a meaningful linear space where similar words are in close proximity to each other. This allows a less rigid similarity approach, where non-exact but similar language is captured.
 - Approach 2: **PySRP** is a hash-based representation approach. It projects words based on their hash, and adds the hashes in a text together to represent the text. There is no meaning in proximity between two words - however, the summed vectors retain a fingerprint of the words within them and are comparable. PySRP is more rigid in what it considers 'similar', and is particularly useful for aligning texts that actually are the same.
 
-- Input representation 1: Chunks.
-- Input representation 2: Full-books.
+- Input representation 1: Chunks. This is the primary comparison unit.
+- Input representation 2: Full-books. This is mainly for high-level comparisons.
 - Input representation 3: Page-level. This is not pre-computed for scaling reasons.
+
+Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py).
