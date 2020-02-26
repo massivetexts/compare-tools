@@ -101,12 +101,18 @@ class HathiMeta():
     def __getitem__(self, label):
         return self.get_volume(label, fields=None)
 
-def get_json_meta(htid, parquet_root):
+def get_json_meta(htid, parquet_root, id_resolver='pairtree'):
     ''' Quickly read a pairtree-organized metadata file that accompanies 
     the Parquet Feature Reader export.'''
-    from htrc_features import utils
+    from htrc_features import utils as efutils
     import ujson as json
-    path = parquet_root + utils.id_to_rsync(htid).replace('json.bz2', 'meta.json')
+    if id_resolver == 'pairtree':
+        path = parquet_root + efutils.id_to_rsync(htid).replace('json.bz2', 'meta.json')
+    elif id_resolver =='stubbytree':
+        from compare_tools.utils import StubbytreeResolver
+        path = parquet_root + StubbytreeResolver.id_to_stubbytree(None, htid, format=None) + '.meta.json'
+    else:
+        raise Exception('Unexpected id_resolver argument')
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     return data

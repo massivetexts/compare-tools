@@ -4,25 +4,35 @@ from htrc_features.utils import _id_encode, id_to_rsync
 from compare_tools.utils import StubbytreeResolver
 import argparse
 
-def move_htrc(htid, pairtree_root, stubbytree_root, move=False, prune=False, format='json', compression='bz2'):
+def move_htrc(htid, pairtree_root, stubbytree_root, move=False, prune=False, format='json', compression='bz2',
+              ignore_suffix=True):
     old = os.path.join(pairtree_root, id_to_rsync(htid))
     new = os.path.join(stubbytree_root,
                        StubbytreeResolver.id_to_stubbytree(None, htid, format=format, compression=compression)
                       )
-
+    olddir = os.path.split(old)[0]
+    # Check if new dir exists
     newdir = os.path.split(new)[0]
     if not os.path.exists(newdir):
         os.makedirs(newdir)
+    
+    if ignore_suffix:
+        all_old_files = os.listdir(olddir)
+    else:        
+        all_old_files = [old]
 
-    if move:
-        shutil.move(old, new)
-    elif prune:
-        raise Exception("Can't prune without moving the original file!")
-    else:
-        shutil.copyfile(old, new)
+    for old_file in all_old_files:
+        old_fname = os.path.join(olddir, old_file)
+        new_fname = os.path.join(newdir, old_file)
+
+        if move:
+            shutil.move(old_fname, new_fname)
+        elif prune:
+            raise Exception("Can't prune without moving the original file!")
+        else:
+            shutil.copyfile(old_fname, new_fname)
         
     if prune:
-        olddir = os.path.split(old)[0]
         while True:
             try:
                 os.rmdir(olddir)
@@ -34,7 +44,7 @@ def move_htrc(htid, pairtree_root, stubbytree_root, move=False, prune=False, for
 def main():
     parser = argparse.ArgumentParser(description='Move provided HTIDs from pairtree to stubbytree, which organizes'
                                      + ' "libid.volid"-style HTIDs in a `libid/volid[::3]/` directory structure. Currently'
-                                     + ' hard-coded to json.bz2.'
+                                     + ' ignores the suffix and moves all files at the end of the pairtree'
                                      + 'Test use with GNU Parallel: cat list-of-htids.txt | parallel --eta -n5000 -j20 python scripts/pairtree_to_stubbytree.py --move /data/extracted-features/ /data/extracted-features-stubby/ {}')
     
     parser.add_argument('pairtree_root', type=str, help='Root for pairtree')
