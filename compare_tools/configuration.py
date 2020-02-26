@@ -56,35 +56,7 @@ try:
     resolver_args = config['resolver']
     my_resolver = combine_resolvers(resolver_args)
 except:
-    raise KeyError("""You must define a resolver for your system somewhere in the search path,
-which is files called 'local.yaml' or '.htrc-config.yaml'.
-
-    Here's what mine looks like on my laptop; first it looks in a flat folder of gzip-compression parquet; then in a pairtree; and it fails those, pulls from the web.
-
-
-resolver:
-  -
-    dir: /home/bschmidt/hathi-parquet
-    format: parquet
-    compression: gzip
-    index: false
-    indexed: false
-    cache: true
-    token_kwargs:
-      pos: false
-      section: body
-      drop_section: true
-    id_resolver: local
-  - 
-    dir: /home/bschmidt/hathi-ef
-    format: json
-    cache: true
-    compression: bz2
-    id_resolver: pairtree
-  - 
-    id_resolver: http
-
-""")
+    my_resolver = None
 
 try:
     resolver_args = config['chunk_resolver']

@@ -2,7 +2,7 @@ from SRP import Vector_file
 from annoy import AnnoyIndex
 import pandas as pd
 import numpy as np
-from compare_tools.utils import split_mtid, join_mtid
+from compare_tools.utils import split_mtid
 
 def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10, 
                        check_dupes=False):

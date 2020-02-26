@@ -2,7 +2,6 @@ import os
 from htrc_features import FeatureReader, Volume, resolvers
 from htrc_features.feature_reader import group_tokenlist
 from htrc_features.utils import id_to_rsync, _id_encode
-from .wem_hook import WEM_transform
 import pandas as pd
 import numpy as np
 import json
@@ -29,11 +28,17 @@ except:
     parquet_root = None
 
 def split_mtid(mtid):
-    htid, seq, start, end = mtid.split('-')
+    parts = mtid.split('-')
+    htid, seq = parts[:2]
     seq = int(seq)
-    start = int(start)
-    end = int(end)
-    return htid, seq, start, end
+    
+    if len(parts) > 2:
+        start, end = parts[:2]
+        start = int(start)
+        end = int(end)
+        return htid, seq, start, end
+    else:
+        return htid, seq
 
 def htid_ize(mtid):
     """
@@ -49,6 +54,8 @@ def SRP_transform(f):
     return hasher.stable_transform(words = f['token'], counts = f['count'], log = True, standardize = True)
 
 def supplement_vectors(volume, *vector_files):
+    from .wem_hook import WEM_transform
+    
     print("Supplementing")
     # Takes a volume and any number of vector files.
     
