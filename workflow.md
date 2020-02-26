@@ -3,6 +3,7 @@ This is the (in-progress) document outlining the SaDDL workflow.
 
 ## Pipeline Overview
 
+```
 EF Files
     ↳ Vector files
        ↳ MTAnnoy Index
@@ -17,6 +18,7 @@ Hand-coded relationships    Metadata inferred relationships
                        ↳ Train / Test
                                    ↘
 Compare_tools → Feature Extraction → Classifier
+```
 
 ## Optional - Converting Extracted Features (EF) files to Parquet
 
