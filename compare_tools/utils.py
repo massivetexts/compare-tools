@@ -33,7 +33,7 @@ def split_mtid(mtid):
     seq = int(seq)
     
     if len(parts) > 2:
-        start, end = parts[:2]
+        start, end = parts[2:]
         start = int(start)
         end = int(end)
         return htid, seq, start, end
