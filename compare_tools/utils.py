@@ -230,7 +230,7 @@ class HTID(object):
             mtids, vecs = zip(*vals)
             return np.array(mtids), np.vstack(vecs)
         else:
-            raise IndexError('{} not in {} Vector_file'.format(name))
+            raise IndexError('{} not in {} Vector_file'.format(self.htid, name))
 
         '''
         # Temporarily cordoning off
