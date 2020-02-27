@@ -36,10 +36,13 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
                     continue
                 vec = vec/norm
                 if check_dupes:
-                    # Does two things - avoids publicated pages / chunks,
+                    # Does two things - avoids duplicated pages / chunks,
                     # and only allows consecutive streams of a book - once
                     # the stream has moved on, that book can't be added again
-                    htid, seq = split_mtid(ix)
+                    mtid_split = split_mtid(ix)
+                    htid = mtid_split[0]
+                    seq = "-".join([str(x) for x in mtid_split[1:]])
+
                     if lasthtid != htid:
                         if htid in unique:
                             continue
@@ -64,7 +67,8 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
     
     print("Done build. Time: %.0f seconds; Saving Index" % (time.time() - start))
     #ind = pd.Series(ind).to_frame('mtid')
-    ind = (pd.Series(ind).apply(lambda x: x.split('-')[0])
+    
+    ind = (pd.Series(ind).apply(lambda x: x.split('-', 1)[0])
                         .reset_index()
                         .rename(columns={0:'htid'})
                         .groupby('htid')['index'].aggregate(['min', 'max'])
