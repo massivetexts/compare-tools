@@ -205,45 +205,51 @@ class HTID(object):
             self._chunked_volume = Volume(self.htid, id_resolver = self.chunked_resolver)
         return self._chunked_volume
     
-    def _get_mtid_vecs(self, format):
+    def _get_mtid_vecs(self, name, write_missing=True, write_path='.'):
         ''' Retrieve mtid formatted vectors (using htid-0001-3-5 format) from the 
-        given vectorfile.'''
+        given vectorfile.
+        
+        The 'name' refers to the name associated with the tuple provided when HTID was initialized.
+        '''
 
         vecs = []
         mtids = []
-        global vector_files
         
-        original_file = Path(config[f"{format}_data_path"])
-        
-        if len(vector_files[format]) == 0:
-            related_files = [l for l in (original_file.parent)\
-                             .glob(original_file.stem + "*.bin")]
-            vector_files[format] = [SRP.Vector_file(f, mode = 'r') for f in related_files]
-            assert(len(vector_files[format]) > 0)
+        assert name in self.vecnames
+        vector_files = self._vecfiles[self.vecnames.index(name)][1]
+        if type(vector_files) is not list:
+            vector_files = [vector_files]
             
         vals = []
-        for f in vector_files[format]:
-            for mtid, vec in f.find_prefix(self.htid, "-"):
+        for vecf in vector_files:
+            for mtid, vec in vecf.find_prefix(self.htid, "-"):
                 vals.append((mtid, vec))
         vals.sort()
         
         if len(vals) > 0:
             mtids, vecs = zip(*vals)
             return np.array(mtids), np.vstack(vecs)
+        else:
+            raise IndexError('{} not in {} Vector_file'.format(name))
 
-        try:
-            writable = [f for f in vector_files[format] if f.mode=='a'][0]
-        except IndexError:
-            suffix = uuid.uuid4().hex[:8]
-            fname = Path(original_file.parent, original_file.stem + "-" + suffix + ".bin")
-            writable = SRP.Vector_file(fname, mode = 'a', dims = vector_files[format][0].dims)
-            vector_files[format].append(writable)
+        '''
+        # Temporarily cordoning off
+        if (len(vals) == 0) and write_missing:
+            try:
+                # See if any files are open for writing
+                writable = [f for f in vector_files if f.mode=='a'][0]
+            except IndexError:
+                suffix = uuid.uuid4().hex[:8]
+                fname = Path(write_path, name + "-" + suffix + ".bin")
+                writable = SRP.Vector_file(fname, mode = 'a', dims = vector_files[format][0].dims)
+                vector_files[format].append(writable)
 
-        supplement_vectors(self.volume, writable)
+            supplement_vectors(self.volume, writable)
 
-        # It just shouldn't be very expensive to do the lookup after doing the write
-        # given how expensive the whole process is.
-        mtids, vecs = zip(*writable.find_prefix(self.htid, "-"))        
+            # It just shouldn't be very expensive to do the lookup after doing the write
+            # given how expensive the whole process is.
+            mtids, vecs = zip(*writable.find_prefix(self.htid, "-"))
+        '''
         return np.array(mtids), np.vstack(vecs)
             
 

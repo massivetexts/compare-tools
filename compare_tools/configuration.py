@@ -82,6 +82,6 @@ def init_htid_args(config):
                )
     
     for key in data_path_keys:
-        args['vecfiles'].append((key, Vector_file(config[key+'_data_path'], mode='a')))
+        args['vecfiles'].append((key, Vector_file(config[key+'_data_path'], mode='a', offset_cache=True)))
         
     return args
