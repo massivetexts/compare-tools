@@ -57,7 +57,7 @@ pygpgme==0.3
 pyinotify==0.9.4
 pyliblzma==0.5.3
 pymarc==3.1.13
-pyOpenSSL==0.13.1
+pyOpenSSL==17.5.0
 pyparsing==2.4.2
 pyroute2==0.4.13
 pyrsistent==0.15.4
