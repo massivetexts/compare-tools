@@ -43,4 +43,5 @@ The raw token counts for books are not particularly useful. The first step in th
 - Input representation 2: Full-books. This is mainly for high-level comparisons.
 - Input representation 3: Page-level. This is not pre-computed for scaling reasons.
 
-Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py).
+Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py). This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py), ideally with the 
+--build-cache argument to 
