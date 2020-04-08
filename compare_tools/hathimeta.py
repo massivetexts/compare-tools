@@ -58,7 +58,16 @@ class HathiMeta():
             conn.execute('DROP TABLE tmp')
             conn.execute('ALTER TABLE tmp2 RENAME TO meta')
 
-    
+    def full_table(self, offset=None, limit=None):
+        ''' This class is really intended to work as a lookup for individual 
+        records. If you want the full table in Pandas, use this method. '''
+        sql = 'SELECT * FROM meta'
+        if limit:
+            sql += ' LIMIT {}'.format(limit)
+        if offset:
+            sql += ' OFFSET {}'.format(offset)
+        return pd.read_sql_query(sql, self.engine)
+        
     def get_volume(self, htid, fields=None):
         '''Retrieve metadata about a Volume by it's HTID number.
         
@@ -122,3 +131,33 @@ def meta_compare(left_htid, right_htid, hathimeta, fields=['title', 'author', 'o
     a = hathimeta[left_htid][fields]
     b = hathimeta[right_htid][fields]
     return pd.DataFrame([a,b], index=['left', 'right'])
+
+def clean_description(s):
+    ''' Takes a column of enumchron/description fields and normalizes them.
+    
+    e.g. vol. 1 -> v1
+        v.001 -> v.1
+        cop.1 -> c.1
+        Pt1 -> pt.1
+        
+    '''
+    new = (s.str.lower().str.replace('v. ', 'v.')
+            .str.replace('^(\d+)$', r'v.\1')
+            .str.replace('copy ?|cop.', 'c.')
+            .str.replace('\.[0 ]+', '.')
+            .str.replace('\((.*?)\)', r'\1')
+            .str.replace('vol.', 'v.')
+            .str.replace('\.$', '')
+            .str.replace('([v|pt|c])(\d)', r'\1.\2')
+    )
+    return new
+
+def clean_title(title):
+    ''' Clean a title field'''
+    import re
+    # Remove up to two trailing '/'-separated sections
+    title = title[::-1].split('/', 2)[-1][::-1].strip()
+    title = title.split('; by')[0]
+    title = re.sub('[\.,;\]\)\[] +?[\(\[]?(assembl|photo|arrang|select|compil|record|collect|edit|translat).{0,100}by.*\.?', '', title, flags=re.IGNORECASE)
+    title = re.sub('[\.\,] [bB]y (the .{0,30})?([A-Z]\w+ [A-Z\w+]|author).*\.?', '', title)
+    return title
