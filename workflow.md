@@ -32,7 +32,7 @@ A second optional preparatory step is flattening the extremely deep, slow Pairtr
 
 To allow for easier juggling of the various data sources (metadata, vectorfiles, EF), the HTID class allows lazy-loading of the information that you need when you need it. An example of its use is at [examples/UsingHTIDClass.ipynb](examples/UsingHTIDClass.ipynb).
 
-## Step 1 Pre-computing Vector_files
+## Step 1: Pre-computing Vector_files
 
 The raw token counts for books are not particularly useful. The first step in the pipeline converts books into feature vectors.
 
@@ -41,7 +41,19 @@ The raw token counts for books are not particularly useful. The first step in th
 
 - Input representation 1: Chunks. This is the primary comparison unit.
 - Input representation 2: Full-books. This is mainly for high-level comparisons.
-- Input representation 3: Page-level. This is not pre-computed for scaling reasons.
+- Input representation 3: Page-level. This is *not* pre-computed for scaling reasons.
 
 Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py). This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py), ideally with the 
 --build-cache argument to 
+
+## Step 2: Building an MTAnnoy Index
+
+Annoy is a fast approximate nearest neighbour library from [Erik Bernhardsson](https://github.com/spotify/annoy). MTAnnoy is a wrapper that supports our prefixes, where a book can be included in multiple chunks. It is used to reduce our space of comparisons - this is the 'quick and dirty' matching to give us candidates for matching in slower ways downstream. Since it is meant to be a rough first step, the more permissive properties of Glove are more appropriate here.
+
+The vectorfiles from our previous step can be used to create an MTAnnoy index with [scripts/create-annoy-from-srp.py](scripts/create-annoy-from-srp.py).
+
+```
+python create-annoy-from-srp.py /data/vectorfiles/all_Glove_testset.bin /data/saddl/annoy/Glove_testset.ann
+```
+
+## Step 3: Exporting Candidates Relationships from MTAnnoy
