@@ -475,7 +475,7 @@ class HTIDComparison(Comparison):
         if (vecname not in self._distance_matrix) or not self._distance_matrix[vecname]:
             leftids, leftvecs = self.left.vectors(vecname)
             rightids, rightvecs = self.right.vectors(vecname)
-            print(leftids)
+            
             if self.adjusted:
                 lmean = np.mean(leftvecs, axis = 0)
                 rmean = np.mean(rightvecs, axis = 0)
@@ -491,6 +491,16 @@ class HTIDComparison(Comparison):
                    )
         else:
             return self._distance_matrix[vecname]['sims']
+
+    def stat_quantiles(self, vecname = 'glove', quantiles=np.arange(0,1,.1)):
+        ''' Quantiles based on the lowest distance match for each chunk/page '''
+        sim = self.distance_matrix(vecname)
+        collector = []
+        for side, axis in [('L', 1), ('R', 0)]:
+            stats = zip(np.array(quantiles).round(2).astype(str), np.quantile(sim.min(axis=axis), quantiles))
+            stats = [("{}{}SimQuantile{}".format(vecname, side, x),y ) for x, y in stats]
+            collector += stats
+        return dict(collector)
         
     def stat_pagecounts(self):
         lpc = self.left.meta(dedupe=True)['page_count']
