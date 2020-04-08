@@ -15,15 +15,15 @@ def main():
     with SRP.Vector_file(args.filepaths[0], mode="r") as vecf:
         dims = vecf.dims
     
-    with SRP.Vector_file(args.outpath, mode='a', dims=dims) as outf:
+    with SRP.Vector_file(args.outpath, mode=args.mode, dims=dims) as outf:
         for efpath in args.filepaths:
             print("Concatenating:", efpath)
             outf.concatenate_file(efpath)
 
-        if args.build_cache:
+    if args.build_cache:
+        with SRP.Vector_file(args.outpath, mode='a', dims=dims) as outf:
             print("Building prefix lookup cache")
-            outf.offset_cache = True
-            outf._build_offset_lookup(sep='-') 
+            outf._build_offset_lookup(sep='-')
     
 if __name__ == '__main__':
     main()
