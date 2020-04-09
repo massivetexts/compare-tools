@@ -224,7 +224,13 @@ class HTID(object):
         for vecf in vector_files:
             for mtid, vec in vecf.find_prefix(self.htid, "-"):
                 vals.append((mtid, vec))
-        vals.sort()
+        try:
+            vals.sort()
+        except ValueError:
+            print("There is a sorting error on the list of (mtid,vec) references. This is likely because "
+                  "of duplicate mtid keys - when that happens, sorting tries to sort by vecs - but you shouldn't "
+                 " have duplicates!")
+            raise
         
         if len(vals) > 0:
             mtids, vecs = zip(*vals)

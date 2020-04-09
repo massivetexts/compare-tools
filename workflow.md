@@ -44,7 +44,7 @@ The raw token counts for books are not particularly useful. The first step in th
 - Input representation 3: Page-level. This is *not* pre-computed for scaling reasons.
 
 Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py). This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py), ideally with the 
---build-cache argument to 
+--build-cache argument.
 
 ## Step 2: Building an MTAnnoy Index
 
@@ -57,3 +57,7 @@ python create-annoy-from-srp.py /data/vectorfiles/all_Glove_testset.bin /data/sa
 ```
 
 ## Step 3: Exporting Candidates Relationships from MTAnnoy
+
+
+
+## Step 4: Processing Similarity Stats
