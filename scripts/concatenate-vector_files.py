@@ -21,7 +21,7 @@ def main():
             outf.concatenate_file(efpath)
 
     if args.build_cache:
-        with SRP.Vector_file(args.outpath, mode='a', dims=dims) as outf:
+        with SRP.Vector_file(args.outpath, offset_cache=True) as outf:
             print("Building prefix lookup cache")
             outf._build_offset_lookup(sep='-')
     
