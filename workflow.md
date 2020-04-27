@@ -52,7 +52,7 @@ Annoy is a fast approximate nearest neighbour library from [Erik Bernhardsson](h
 
 The vectorfiles from our previous step can be used to create an MTAnnoy index with [scripts/create-annoy-from-srp.py](scripts/create-annoy-from-srp.py).
 
-```
+```bash
 python create-annoy-from-srp.py /data/vectorfiles/all_Glove_testset.bin /data/saddl/annoy/Glove_testset.ann
 ```
 
@@ -60,4 +60,35 @@ python create-annoy-from-srp.py /data/vectorfiles/all_Glove_testset.bin /data/sa
 
 
 
-## Step 4: Processing Similarity Stats
+## Training Step 1: Processing Similarity Stats
+
+Now we just compare. This is done using the Comparison class, as seen in `ComparisonPipeline.ipynb`. However, there's a script for doing this in an easily parallelizable way, `crunch_stats.py`.
+
+Export a doc of JSON records to compare, minimally `{'left':'..', 'right':'..'}` but optionally with `judgment` and `notes` columns. Sorting by left will make a slight difference downstream. Exporting to the JSON can be done from a DataFrame with `df.sort_values('left').to_dict(orient='records')`. Examples of this can be seen at the bottom of the `MetadataGroundTruth.ipynb` and `FakeBookGeneration.ipynb`.
+
+These JSON records are piped to `scripts/crunch_stats.py`. Example:
+
+- `cat json_stats.json | parallel -j20 -n500 scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord {}`
+
+Note that `n` can't go much higher because there's a system limit on how many system args can be sent to something. If you'd like to split your input into multiple files and have `crunch_stats.py` read from a file, you can provide the filepath to `--input-file` (or `-i`). e.g. here's an example that splits the input into files in `/tmp` then processes those with 20 parallel processes.
+
+```bash
+split -l 10000 json_stats.json /tmp/json-stat-chunk
+ls /tmp/json-stat-chunk/* | parallel -j20 -n1 scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord -i {}`
+```
+
+For training, I interwove the 'fake' books with the regular book input.
+
+## Training Step 2: Train classification model.
+
+The most effective approach has been to use a convolution neural network classifier with heavy dropout.
+
+- 
+-
+
+
+## Step 4: Similarity Inference
+
+- use comparison class to get unrolled sim for candidate relationships
+- feed to saved model
+- parse recommendation with TBD code.

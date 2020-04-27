@@ -2,8 +2,10 @@ import numpy as np
 import tensorflow as tf
 
 judgment_labels = ['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS', 'AUTHOR', 'DIFF']
+# Create a {code: index} dict
+judgment_label_ref = dict(zip(judgment_labels, range(len(judgment_labels))))
 
-def df_to_tfrecords(X, output_file, labels='default'):
+def df_to_tfrecords(X, output_file, label_ref='default'):
     '''
     Take a dataframe where
         - the first X*X columns are features for a pairwise comparison between
@@ -20,32 +22,33 @@ def df_to_tfrecords(X, output_file, labels='default'):
     string judgment is still kept in the TFRecord file.
     '''
     
-    if labels == 'default':
-        labels = judgment_labels
-    # Create a {code: index} dict
-    label_ref = dict(zip(judgment_labels, range(len(judgment_labels))))
-    
+    if label_ref == 'default':
+        label_ref = judgment_labels
+
     writer = tf.io.TFRecordWriter(output_file)
     for i, row in X.iterrows():
-        # Convert judgment to one-hot encode
-        if 'judgment' in row and row['judgment'] in label_ref:
-            y = tf.one_hot(label_ref[row['judgment']], len(labels))
-        else:
-            y = tf.one_hot(-1, len(labels))
+        serialized = _serialize_series(row, label_ref)
+        writer.write(serialized)
+    writer.close()
+    
+def _serialize_series(row, label_ref):
+    # Convert judgment to one-hot encode
+    if 'judgment' in row and row['judgment'] in label_ref:
+        y = tf.one_hot(label_ref[row['judgment']], len(label_ref))
+    else:
+        y = tf.one_hot(-1, len(labels))
             
-        feature = {
+    feature = {
           'X': tf.train.Feature(float_list=tf.train.FloatList(value=row.iloc[:-4].values.flatten())),
           'left': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['left'].encode('utf-8')])),
           'right': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['right'].encode('utf-8')])),
           'judgment': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['judgment'].encode('utf-8')])),
           'y': tf.train.Feature(int64_list=tf.train.Int64List(value=y)),
           'notes': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['notes'].encode('utf-8')])),
-        }
-        example = tf.train.Example(features=tf.train.Features(feature=feature))
-        serialized = example.SerializeToString()
-        writer.write(serialized)
-
-    writer.close()
+    }
+    example = tf.train.Example(features=tf.train.Features(feature=feature))
+    serialized = example.SerializeToString()
+    return serialized
 
 def parse_comparison_records(example_proto, labels='default', input_shape=(50,50,1), parse_single=False):
     '''Definition for reading TFRecords. Input shape should be three-dimensional, with a channel at the end.'''
