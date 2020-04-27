@@ -57,6 +57,20 @@ class Comparison(object):
         self.sw_scores = sw
         return self.sw_scores
     
+    def unrolled_sim(self, max_size=50, vecname=None, metric='cosine'):
+        ''' Return the similarity matrix, madded to maxsize x maxsize shape and unrolled to a vector'''
+        # Similarity rather than distance, so that higher numbers are more similar
+        # This is because I'll pad the rest of the matrix with zeros as a placeholder, and want the
+        # value of zero closer to 'dissilimar' than 'similar'
+        simmat = self.similarity_matrix(vecname=vecname, metric=metric)
+        # Truncate if necessary
+        simmat = simmat[:max_size, :max_size]
+        # Pad similarity matrix so that it is a predictable size
+        fullmat = np.zeros((max_size,max_size))
+        fullmat[:simmat.shape[0], :simmat.shape[1]] = simmat
+        # Unroll the matrix into a 1d array
+        return np.reshape(fullmat, (max_size**2))
+    
     def yield_sw_runs(self, threshold, no_joined_chunks = True, **kwargs):
         self.sw_copy = np.copy(self.sw_scores)
         while True:
