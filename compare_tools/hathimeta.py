@@ -80,6 +80,16 @@ class HathiMeta():
         sql = single_item_template.format(self._field_call(fields), htid)
         return pd.read_sql_query(sql, self.engine).iloc[0]
     
+    def get_where(self, where_clause, fields=None):
+        '''
+        Retrieve all records WHERE {clause}
+        '''
+        template = 'SELECT {} FROM meta WHERE {}'
+        if not fields:
+            fields = self.default_fields
+        sql = template.format(self._field_call(fields), where_clause)
+        return pd.read_sql_query(sql, self.engine)
+    
     def random(self, fields=None):
         ''' Return a single random volume. '''
         random_item_template = "SELECT {} FROM meta ORDER BY RANDOM() LIMIT 1;"
