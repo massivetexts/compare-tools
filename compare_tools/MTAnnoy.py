@@ -191,14 +191,23 @@ class MTAnnoy():
         
         return df[['target', 'target_seq', 'match', 'match_seq', 'dist', 'rank']]
     
-    def doc_match_stats(self, htid, n=30, max_dist=None):
+    def doc_match_stats(self, htid, n=30, min_count=None, max_dist=None):
         '''
         Return a summed DF, that reduces chunk to chunk matches to doc to doc matching statistics:
             - count of matching chunks
             - mean similarity for matched chunks
             - proportion of the target that the candidate matches, and vice-versa
+        
+        min_count - minimum number of matches between left and right to keep. In the edge 
+            case where the left has less than that (e.g. if left only has one chunk and you have a min_count of
+            2), the min_count is set to the number of left chunks for book.
         '''
         target_length = self.ind.loc[htid].length
+        if min_count and min_count > target_length:
+            min_count = target_length
+        if min_count and min_count == 1:
+            min_count = None
+
         df = self.get_named_result_df(htid=htid, n=n, max_dist=max_dist, dedupe=True)
         
         stats = df.groupby(['target', 'match'])['dist'].aggregate(['count', 'mean']).sort_values(['count', 'mean'], ascending=False).reset_index(0)
@@ -206,4 +215,6 @@ class MTAnnoy():
         stats['prop_target'] = stats['count'] / target_length
         stats['prop_match'] = stats['count'] / stats.length
         stats = stats.reset_index()
+        if min_count:
+            stats = stats[stats['count'] >= min_count]
         return stats
