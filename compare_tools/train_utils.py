@@ -36,7 +36,7 @@ def _serialize_series(row, label_ref):
     if 'judgment' in row and row['judgment'] in label_ref:
         y = tf.one_hot(label_ref[row['judgment']], len(label_ref))
     else:
-        y = tf.one_hot(-1, len(labels))
+        y = tf.one_hot(-1, len(label_ref))
             
     feature = {
           'X': tf.train.Feature(float_list=tf.train.FloatList(value=row.iloc[:-4].values.flatten())),

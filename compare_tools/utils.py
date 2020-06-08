@@ -29,9 +29,12 @@ except:
 
 def split_mtid(mtid):
     parts = mtid.split('-')
+    diff = len(parts) - 4
+    if diff > 0:
+        # Adjust for when htid has an underscore - though upstream and downstream tasks may not support this
+        parts = ["-".join(parts[:1+diff]), parts[1+diff:]]
     htid, seq = parts[:2]
-    seq = int(seq)
-    
+
     if len(parts) > 2:
         start, end = parts[2:]
         start = int(start)
@@ -337,3 +340,28 @@ class HTID(object):
             return "<HTRC Volume: %s - %s (%s)>" % (self.htid, self.meta['title'], self.meta['year'])
         except:
             return "<HTID: %s>" % self.htid
+
+        
+def concatenate_vector_files(inpath1, inpath2, outpath, newdim):
+    '''
+    Create a vector file that merges two other vectorfiles pairwise. It assumed that
+    each row in input into each vector file in alignment. This is used for testing Glove+SRP together.
+    '''
+    i = 0
+    vecf1 = Vector_file(inpath1, mode='r', offset_cache=False)
+    vecf2 = Vector_file(inpath2, mode='r', offset_cache=False)
+    with Vector_file(outpath, mode='w', dims=newdim) as newvecf:
+        for result1, result2 in zip(vecf1, vecf2):
+            mtid1, vec1 = result1
+            mtid2, vec2 = result2
+            if (mtid1 != mtid2):
+                print("Not entirely aligned!", i, mtid1, mtid2)
+            newvec = np.concatenate([vec1, vec2])
+            newvecf.add_row(mtid2, newvec)
+            i += 1
+            if i % 1000 == 0:
+                print(i, end=',')
+
+    with Vector_file(outpath, mode='a', offset_cache=True) as newvecf:
+        print('Building new offset lookup')
+        newvecf._build_offset_lookup(sep='-', force=True)
