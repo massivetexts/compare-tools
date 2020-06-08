@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--save-sim', action='store_true',
                         help='Save an unrolled similarity matrix instead of the statistics.')
     parser.add_argument('--input-file', '-i', type=str,  help='Filepath for input data, to use instead of input_dicts.')
+    parser.add_argument('--no-compress', action='store_true',  help='Avoid tfrecord compression.')
     parser.add_argument('input_dicts', nargs='*', type=str,
                         help="dicts of format {'left':'x', 'right': 'y'} to process. If you're splitting up external data, it's "
                         "more efficient to sort by 'left' columns first. If you're saving from a DataFrame with 'left' and 'right' "
@@ -49,7 +50,8 @@ def main():
             raise Exception('TFRecord can only save a padded similarity matrix.')
         args.filename = args.filename + '.tfrecord'
         outpath = os.path.join(args.outdir, args.filename)
-        writer = tf.io.TFRecordWriter(outpath)
+        options = tf.io.TFRecordOptions(compression_type="GZIP" if not args.no_compress else "")
+        writer = tf.io.TFRecordWriter(outpath, options=options)
     else:
         args.filename = args.filename + '.parquet'
         outpath = os.path.join(args.outdir, args.filename)
@@ -107,7 +109,7 @@ def main():
         out.to_parquet(outpath, compression='snappy')
         
     
-    logging.info("{} records parsed in {} min".format(len(df), ((time.time() - start)/60)))
+    logging.info("{} records parsed in {} min".format(i, ((time.time() - start)/60)))
     
 if __name__ == '__main__':
     main()
