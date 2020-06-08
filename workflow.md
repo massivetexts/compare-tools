@@ -43,7 +43,8 @@ The raw token counts for books are not particularly useful. The first step in th
 - Input representation 2: Full-books. This is mainly for high-level comparisons.
 - Input representation 3: Page-level. This is *not* pre-computed for scaling reasons.
 
-Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py). This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py), ideally with the 
+Currently, chunk-based vector representations over GloVe and PySRP are computed with [hathi-test-dataset/vectorization.py](https://github.com/massivetexts/hathi-test-dataset/blob/master/vectorization.py). You can also use `--no-srp` or `--no-glove` to exclude one of the vector representations. SRP is faster but requires larger vectors (default is 640-dims vs. 300), while GloVe is smaller and has had slightly better results in the places we've tested it.
+This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py) to patch together the output files, ideally with the 
 --build-cache argument.
 
 ## Step 2: Building an MTAnnoy Index
@@ -55,6 +56,8 @@ The vectorfiles from our previous step can be used to create an MTAnnoy index wi
 ```bash
 python create-annoy-from-srp.py /data/vectorfiles/all_Glove_testset.bin /data/saddl/annoy/Glove_testset.ann
 ```
+
+We've written a paper evaluating different parameterizations of Annoy, contact Peter Organisciak for the pre-print.
 
 ## Step 3: Exporting Candidates Relationships from MTAnnoy
 
@@ -89,6 +92,4 @@ The most effective approach has been to use a convolution neural network classif
 
 ## Step 4: Similarity Inference
 
-- use comparison class to get unrolled sim for candidate relationships
-- feed to saved model
-- parse recommendation with TBD code.
+- In-progress, see [scripts/InferenceOnWork.ipynb]
