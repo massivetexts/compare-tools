@@ -12,8 +12,8 @@ def full_ground_truth(left_htid, ground_truth, meta):
     author_gt = pd.DataFrame([dict(left=left_htid, right=htid, judgment='author') for htid in author_htids])
     return pd.concat([left_gt, author_gt])
 
-def n_match_generator(left, ann, n, max_dist=None):
-    df = ann.doc_match_stats(left, n=n, max_dist=max_dist)
+def n_match_generator(left, ann, n, max_dist=None, min_count=None):
+    df = ann.doc_match_stats(left, n=n, max_dist=max_dist, min_count=min_count)
     df = df.rename(columns={'target':'left', 'match': 'right'})[['left', 'right'] + list(df.columns[2:])].sort_values('mean')
     df['rank'] = np.arange(1, df.shape[0]+1)
     return df
@@ -49,7 +49,7 @@ def run_eval(htids, condition_name, match_func, gt, meta, just_stats=False, prin
                 results['condition'] = condition_name
                 collector.append(results)
         except:
-            logging.warning('Issue with target ', left)
+            logging.warning('Issue with target ' + left)
             continue
     
     if just_stats:
@@ -80,6 +80,8 @@ def main():
                         help='Number of result chunks per target chunk.')
     parser.add_argument('--max-sim', '-m', type=float, default=1.,
                         help='Maximum cut-off similarity for inclusion in search results.')
+    parser.add_argument('--min-count', '-c', type=int, default=1,
+                        help='Minimum number of matching chunks between left and right.')
     #parser.add_argument('target_id_path', type=str, help="File with list of target ids to evaluation.")
     parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
@@ -98,11 +100,12 @@ def main():
     print('Loading Annoy')
     ann = MTAnnoy(args.ann_location, dims=args.ann_dims)
     
-    name = "max{}_n{}_ann{}".format(args.max_sim,
+    name = "max{}_n{}_c{}_ann{}".format(args.max_sim,
                                     args.results_per_chunk, 
+                                    args.min_count,
                                     args.ann_name if args.ann_name else args.ann_location)
     print('Running Evaluation {} for {} ids'.format(name, len(targets)))
-    matcher = lambda x: n_match_generator(x, ann, args.results_per_chunk, args.max_sim)
+    matcher = lambda x: n_match_generator(x, ann, args.results_per_chunk, args.max_sim, args.min_count)
     tp_fn, fp = run_eval(targets, name, matcher, gt, meta, print_every=20, just_stats=True)
 
     print("Saving Results")
