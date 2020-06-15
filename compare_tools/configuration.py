@@ -64,6 +64,12 @@ try:
 except KeyError:
     # The chunk one can just be the regular resolver.
     chunk_resolver = my_resolver
+
+def wem_loader(model_name):
+    ''' Load Gensim-style WEM model. e.g. 'glove-wiki-gigaword-100' '''
+    import gensim.downloader as api
+    api.BASE_DIR, api.base_dir = config['gensim_data_path'], config['gensim_data_path']
+    return api.load(model_name)
     
 def init_htid_args(config):
     ''' Using arguments from config, initialize HathiMeta and Vector_file objects

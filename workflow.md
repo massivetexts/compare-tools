@@ -47,6 +47,13 @@ Currently, chunk-based vector representations over GloVe and PySRP are computed 
 This script can be parallelized, in which case you'll want to use [concatenate-vector_files.py](scripts/concatenate-vector_files.py) to patch together the output files, ideally with the 
 --build-cache argument.
 
+Paths to various local files should be in `local.yaml`, in the same folder, or `~/.htrc_config.yaml`. GloVe is loaded (and downloaded the first time) using the [gensim downloader](https://radimrehurek.com/gensim/auto_examples/howtos/run_downloader_api.html). You can change the path for the models with the `gensim_data_path` parameter in `local.yaml`. If you want to load the model in code, try:
+
+```
+from compare_tools.configuration import wem_loader
+wem_loader('glove-wiki-gigaword-300')
+```
+
 ## Step 2: Building an MTAnnoy Index
 
 Annoy is a fast approximate nearest neighbour library from [Erik Bernhardsson](https://github.com/spotify/annoy). MTAnnoy is a wrapper that supports our prefixes, where a book can be included in multiple chunks. It is used to reduce our space of comparisons - this is the 'quick and dirty' matching to give us candidates for matching in slower ways downstream. Since it is meant to be a rough first step, the more permissive properties of Glove are more appropriate here.
