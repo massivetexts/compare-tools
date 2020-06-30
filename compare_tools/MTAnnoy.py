@@ -5,7 +5,7 @@ import numpy as np
 from compare_tools.utils import split_mtid
 
 def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10, 
-                       check_dupes=False):
+                       check_dupes=False, on_disk=True):
     ''' 
     Build an Annoy index for approximate nearest neighbours, ingesting one
     or more of the pySRP vector files. Uses the on-disk build.
@@ -19,7 +19,8 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
         vector_filepaths = [vector_filepaths]
         
     t = AnnoyIndex(dims)
-    t.on_disk_build(filename)
+    if on_disk:
+        t.on_disk_build(filename)
     
     # List of mtids, where the list index matches the index given to annoy
     ind = []
@@ -64,6 +65,9 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
 
     print("Done ingesting. Time: %.0f seconds; Building" % (time.time() - start))
     t.build(n_trees)
+    
+    if not on_disk:
+        t.save(filename)
     
     print("Done build. Time: %.0f seconds; Saving Index" % (time.time() - start))
     #ind = pd.Series(ind).to_frame('mtid')
