@@ -13,7 +13,7 @@ def main():
     
     args = parser.parse_args()
     
-    if len(filepaths) == 0 and not args.no_concat:
+    if len(args.filepaths) == 0 and not args.no_concat:
         raise Exception("Nothing to do without input filepaths")
     if args.no_concat and not args.build_cache:
         raise Exception("If you're not concatenating and not building a cache, you're not doing anything.")
@@ -30,7 +30,7 @@ def main():
     if args.build_cache:
         with SRP.Vector_file(args.outpath, offset_cache=True) as outf:
             print("Building prefix lookup cache")
-            outf._build_offset_lookup(sep='-')
+            outf._build_prefix_lookup(sep='-', dump_every=2000000)
     
 if __name__ == '__main__':
     main()
