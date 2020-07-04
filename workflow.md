@@ -69,8 +69,34 @@ We've written a paper evaluating different parameterizations of Annoy, contact P
 ## Step 3: Exporting Candidates Relationships from MTAnnoy
 
 
+## Training - Exporting Relationships for Training
 
-## Training Step 1: Processing Similarity Stats
+### Relationship Sources
+
+Relationships are trained from multiple sources:
+
+- Metadata-based ground truth: exported from high-confidence metadata inferences.
+  - Additionally, OCLC data is used
+- Generated ('fake') books for relationships that are difficult to find ground truth for.
+- GoodReads-based 'similar book' information.
+- Annoy-based SIMDIFF information, which is used to train relationships between different books that look similar. This is because RANDIFF (a relationship between two randomly selected works) is too low of a hurdle.
+
+### Training Dataset Creation Step 1: HathiTrust Metadata-based Ground Truth
+
+ See https://github.com/massivetexts/hathi-test-dataset/blob/master/notebooks/MetadataGroundTruth.ipynb
+ 
+### Training Dataset Creation Step 2: OCLC Metadata-based Ground Truth
+
+Data from OCLC's Clasify API is used to augment the SWDE tag, due to imperfect metadata performance with this class elsewhere.
+TODO
+
+### Training Dataset Creation Step 3: Fake Books
+
+1. Run [./scripts/FakeBookGeneration.ipynb]. This notebook creates fake books in order to train PARTOF, CONTAINS, and OVERLAPS relationships. This includes fake anthologies, and long books split into multi-volume sets. OVERLAPS include two different anthologies that have a matching sub-unit. This script creates fake EF books and a listing of relationship - they'll need to subsequently be vectorized.
+2. Run vectorization code on all the fake books. If parallelized, the output will need to be concatenated into a single vector file also. TODO add param to allow for any vector_file uses to fall back on the file of fake book vectors when necessary.
+3. Crunch stats for training.
+
+### Training Step 1: Processing Similarity Stats
 
 Now we just compare. This is done using the Comparison class, as seen in `ComparisonPipeline.ipynb`. However, there's a script for doing this in an easily parallelizable way, `crunch_stats.py`.
 
