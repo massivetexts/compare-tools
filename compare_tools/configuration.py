@@ -9,15 +9,17 @@ config = {}
 
 used = []
 pathset = []
-    
-for depth in range(7):
+
+pathset.append(Path("~/.htrc-config.yaml").expanduser())
+for depth in range(6,-1,-1):
     for fname in ['local.yaml', '.htrc-config.yaml']:
         pathset.append(Path('../' * depth, fname))
-pathset.append(Path("~/.htrc-config.yaml").expanduser())
+
 for path in pathset:
     if path.exists():
         used.append(path)
-        config.update(yaml.safe_load(open(path)))
+        params = yaml.safe_load(open(path))
+        config.update(params)
 
 # Some of these can be imported directly, if they're there.
 try:
