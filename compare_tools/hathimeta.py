@@ -58,15 +58,9 @@ class HathiMeta():
             conn.execute('DROP TABLE tmp')
             conn.execute('ALTER TABLE tmp2 RENAME TO meta')
 
-    def full_table(self, offset=None, limit=None):
-        ''' This class is really intended to work as a lookup for individual 
-        records. If you want the full table in Pandas, use this method. '''
-        sql = 'SELECT * FROM meta'
-        if limit:
-            sql += ' LIMIT {}'.format(limit)
-        if offset:
-            sql += ' OFFSET {}'.format(offset)
-        return pd.read_sql_query(sql, self.engine)
+    def full_table(self):
+        print('Deprecated: `full_table` is just a wrapper for HathiMeta.get_fields.')
+        return self.get_fields()
         
     def get_volume(self, htid, fields=None):
         '''Retrieve metadata about a Volume by it's HTID number.
@@ -90,15 +84,18 @@ class HathiMeta():
         sql = template.format(self._field_call(fields), where_clause)
         return pd.read_sql_query(sql, self.engine)
     
-    def random(self, fields=None):
+    def sample(self, n=1, fields=None):
         ''' Return a single random volume. '''
-        random_item_template = "SELECT {} FROM meta ORDER BY RANDOM() LIMIT 1;"
+        random_item_template = "SELECT {} FROM meta ORDER BY RANDOM() LIMIT {};"
         if not fields:
             fields = self.default_fields
-        sql = random_item_template.format(self._field_call(fields))
-        return pd.read_sql_query(sql, self.engine).iloc[0]
+        sql = random_item_template.format(self._field_call(fields), n)
+        results = pd.read_sql_query(sql, self.engine)
+        if n == 1:
+            return results.iloc[0]
+        return results
     
-    def get_fields(self, fields=None, chunksize=None):
+    def get_fields(self, fields=None, chunksize=None, offset=None, limit=None):
         '''Retrieve full table, filtered to the fields specified or '*'. Can be chunked.
         '''
         if not fields:
