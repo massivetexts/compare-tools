@@ -81,7 +81,9 @@ def init_htid_args(config):
     from SRP import Vector_file
 
     metastore = HathiMeta(config['metadb_path'])
-    data_path_keys = [name[:-10] for name in config.keys() if name.endswith('_data_path')]
+    data_path_keys = [name[:-10] for name in config.keys() if name in ['glove_data_path', 
+                                                                       'glove_fake_data_path',
+                                                                       'srp_data_path']]
     
     args = dict(id_resolver=my_resolver,
                 chunk_resolver = chunk_resolver,
