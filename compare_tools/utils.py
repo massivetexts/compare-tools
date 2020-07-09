@@ -131,6 +131,10 @@ class HTID(object):
             (key, Vectorfile), or a list with multiple (key, Vectorfile) tuples.
             Currently, only vectorfiles by mtid are supported - the htid and a 
             four character wide one-indexed integer.
+            
+            If a vectorfile name has an underscore, it is considered a fallback - e.g. glove_backup
+            is the fallback for glove. This can be used for including a set of vectorfiles.
+            e.g. 'glove_1', 'glove_2', ..., 'glove_n'
         '''
         self.htid = htid
         self.id_resolver = id_resolver
@@ -217,16 +221,20 @@ class HTID(object):
 
         vecs = []
         mtids = []
-        
-        assert name in self.vecnames
-        vector_files = self._vecfiles[self.vecnames.index(name)][1]
-        if type(vector_files) is not list:
-            vector_files = [vector_files]
             
+        vecnames = sorted([vecname for vecname in self.vecnames if vecname.split('_')[0] == name])
+        assert len(vecnames) > 0
+        
         vals = []
-        for vecf in vector_files:
-            for mtid, vec in vecf.find_prefix(self.htid, "-"):
-                vals.append((mtid, vec))
+        for name in vecnames:
+            vecf = self._vecfiles[self.vecnames.index(name)][1]
+            try:
+                for mtid, vec in vecf.find_prefix(self.htid, "-"):
+                    vals.append((mtid, vec))
+            except:
+                continue
+            if len(vals) > 0:
+                break
         try:
             vals.sort()
         except ValueError:
@@ -239,7 +247,7 @@ class HTID(object):
             mtids, vecs = zip(*vals)
             return np.array(mtids), np.vstack(vecs)
         else:
-            raise IndexError('{} not in {} Vector_file'.format(self.htid, name))
+            raise IndexError('{} not in {}'.format(self.htid, vecnames))
 
         '''
         # Temporarily cordoning off
