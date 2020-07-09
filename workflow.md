@@ -93,8 +93,8 @@ TODO
 ### Training Dataset Creation Step 3: Fake Books
 
 1. Run [./scripts/FakeBookGeneration.ipynb]. This notebook creates fake books in order to train PARTOF, CONTAINS, and OVERLAPS relationships. This includes fake anthologies, and long books split into multi-volume sets. OVERLAPS include two different anthologies that have a matching sub-unit. This script creates fake EF books and a listing of relationship - they'll need to subsequently be vectorized.
-2. Run vectorization code on all the fake books. If parallelized, the output will need to be concatenated into a single vector file also. TODO add param to allow for any vector_file uses to fall back on the file of fake book vectors when necessary.
-3. Crunch stats for training.
+2. Run vectorization code on all the fake books. If parallelized, the output will need to be concatenated into a single vector file also.
+3. Crunch stats for training. Since the fake book vectors are likely in a different Vector_file than the one specified in the 'glove_data_path' location (in `local.yaml` or `~/.htrc-config.yaml`), you can point to it at 'glove_fake_data_path' (or any identifier after the first underscore, really). This will be the fallback location for vectors that can't be found in the default location.
 
 ### Training Step 1: Processing Similarity Stats
 
@@ -104,13 +104,13 @@ Export a doc of JSON records to compare, minimally `{'left':'..', 'right':'..'}`
 
 These JSON records are piped to `scripts/crunch_stats.py`. Example:
 
-- `cat json_stats.json | parallel -j20 -n500 scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord {}`
+- `cat json_stats.json | parallel -j20 -n500 python scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord {}`
 
 Note that `n` can't go much higher because there's a system limit on how many system args can be sent to something. If you'd like to split your input into multiple files and have `crunch_stats.py` read from a file, you can provide the filepath to `--input-file` (or `-i`). e.g. here's an example that splits the input into files in `/tmp` then processes those with 20 parallel processes.
 
 ```bash
 split -l 10000 json_stats.json /tmp/json-stat-chunk
-ls /tmp/json-stat-chunk/* | parallel -j20 -n1 scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord -i {}`
+ls /tmp/json-stat-chunk/* | parallel -j20 -n1 python scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord -i {}`
 ```
 
 For training, I interwove the 'fake' books with the regular book input.
