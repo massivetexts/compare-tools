@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
-judgment_labels = ['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS', 'AUTHOR', 'DIFF']
+judgment_labels = ['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS', 'OVERLAPS', 'AUTHOR', 'SIMDIFF', 'GRSIM', 'RANDDIFF']
 # Create a {code: index} dict
 judgment_label_ref = dict(zip(judgment_labels, range(len(judgment_labels))))
 
