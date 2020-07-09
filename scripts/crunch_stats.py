@@ -13,7 +13,7 @@ from io import StringIO
 
 def main():
     logging.basicConfig(level=logging.INFO)
-    
+    config.update(config['full'])
     htid_args = init_htid_args(config)
 
     parser = argparse.ArgumentParser(description='Take a set of left/right judgments to crunch statistics for.')
@@ -25,6 +25,8 @@ def main():
     parser.add_argument('--save-sim', action='store_true',
                         help='Save an unrolled similarity matrix instead of the statistics.')
     parser.add_argument('--input-file', '-i', type=str,  help='Filepath for input data, to use instead of input_dicts.')
+    parser.add_argument('--matrix-size', '-m', type=int, default=100,
+                        help='Size of similarity matrix. Anything smaller is padded, anything longer is truncated.')
     parser.add_argument('--no-compress', action='store_true',  help='Avoid tfrecord compression.')
     parser.add_argument('input_dicts', nargs='*', type=str,
                         help="dicts of format {'left':'x', 'right': 'y'} to process. If you're splitting up external data, it's "
@@ -40,10 +42,11 @@ def main():
     elif (len(args.input_dicts) > 0) and args.input_file:
         raise Exception("Can't set both input_dicts and input_file")
     elif len(args.input_dicts) > 0:
-        chunks = pd.read_json(StringIO("\n".join(args.input_dicts)), orient='records', lines=True, chunksize=5000)
+        chunks = pd.read_json(StringIO("\n".join(args.input_dicts)),
+                              orient='records', lines=True, chunksize=5000)
     elif args.input_file:
-        chunks = pd.read_json(args.input_file, orient='records', lines=True, chunksize=5000)
-
+        chunks = pd.read_json(args.input_file, 
+                              orient='records', lines=True, chunksize=5000)
     if args.tfrecord:
         import tensorflow as tf
         if not args.save_sim:
@@ -71,13 +74,13 @@ def main():
                 comp = HTIDComparison(left, right)
                 try:
                     if args.save_sim:
-                        vec = comp.unrolled_sim()
+                        vec = comp.unrolled_sim(max_size=args.matrix_size)
                         stats = dict(zip([str(k) for k in range(vec.shape[0])], vec))
                         stats['left'] = leftid
                         stats['right'] = rightid
                         if args.tfrecord:
                             stats['judgment'] = match['judgment'] if 'judgment' in match else 'UNKNOWN'
-                            stats['notes'] = match['notes'] if 'notes' in match else ''
+                            stats['notes'] = str(match['notes']) if 'notes' in match else ''
                         stats_collector.append(stats)
                     else:
                         stats = comp.all_stats()
@@ -109,7 +112,7 @@ def main():
         out.to_parquet(outpath, compression='snappy')
         
     
-    logging.info("{} records parsed in {} min".format(i, ((time.time() - start)/60)))
+    logging.info("{} records parsed in {} min".format(n, ((time.time() - start)/60)))
     
 if __name__ == '__main__':
     main()
