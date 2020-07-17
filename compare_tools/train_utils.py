@@ -31,15 +31,16 @@ def df_to_tfrecords(X, output_file, label_ref='default'):
         writer.write(serialized)
     writer.close()
     
-def _serialize_series(row, label_ref):
+def _serialize_series(row, label_ref, sim_size=100**2, wem_size=300*2):
     # Convert judgment to one-hot encode
     if 'judgment' in row and row['judgment'] in label_ref:
         y = tf.one_hot(label_ref[row['judgment']], len(label_ref))
     else:
         y = tf.one_hot(-1, len(label_ref))
-            
+    
     feature = {
-          'X': tf.train.Feature(float_list=tf.train.FloatList(value=row.iloc[:-4].values.flatten())),
+          'simX': tf.train.Feature(float_list=tf.train.FloatList(value=row.iloc[:sim_size].values.flatten())),
+          'wemX': tf.train.Feature(float_list=tf.train.FloatList(value=row.iloc[sim_size:sim_size+wem_size].values.flatten())),
           'left': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['left'].encode('utf-8')])),
           'right': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['right'].encode('utf-8')])),
           'judgment': tf.train.Feature(bytes_list=tf.train.BytesList(value=[row['judgment'].encode('utf-8')])),
@@ -50,12 +51,14 @@ def _serialize_series(row, label_ref):
     serialized = example.SerializeToString()
     return serialized
 
-def parse_comparison_records(example_proto, labels='default', input_shape=(50,50,1), parse_single=False):
+def parse_comparison_records(example_proto, labels='default', input_shape=(100,100,1),
+                             wem_shape=(300,2), parse_single=False):
     '''Definition for reading TFRecords. Input shape should be three-dimensional, with a channel at the end.'''
     if labels == 'default':
         labels = judgment_labels
     features = {
-        'X': tf.io.FixedLenFeature(input_shape, tf.float32),
+        'simX': tf.io.FixedLenFeature(input_shape, tf.float32),
+        'wemX': tf.io.FixedLenFeature(wem_shape, tf.float32),
         'left': tf.io.FixedLenFeature([], tf.string),
         'right': tf.io.FixedLenFeature([], tf.string),
         'judgment': tf.io.FixedLenFeature([], tf.string),

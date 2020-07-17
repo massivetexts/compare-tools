@@ -110,7 +110,7 @@ Note that `n` can't go much higher because there's a system limit on how many sy
 
 ```bash
 split -l 10000 json_stats.json /tmp/json-stat-chunk
-ls /tmp/json-stat-chunk/* | parallel -j20 -n1 python scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --tfrecord -i {}`
+ls /tmp/json-stat-chunk/* | parallel -j20 -n1 python scripts/crunch_stats.py --outdir /data/save_wherever --save-sim --save-wem --tfrecord -i {}`
 ```
 
 For training, I interwove the 'fake' books with the regular book input.

@@ -8,6 +8,7 @@ import time
 import os
 import pandas as pd
 import argparse
+import numpy as np
 import json
 from io import StringIO
 
@@ -24,6 +25,8 @@ def main():
     parser.add_argument('--tfrecord', action='store_true', help='Whether to save output as a TFRecord.')
     parser.add_argument('--save-sim', action='store_true',
                         help='Save an unrolled similarity matrix instead of the statistics.')
+    parser.add_argument('--save-wem', action='store_true',
+                        help='Save a single averaged WEM vector for each book.')
     parser.add_argument('--input-file', '-i', type=str,  help='Filepath for input data, to use instead of input_dicts.')
     parser.add_argument('--matrix-size', '-m', type=int, default=100,
                         help='Size of similarity matrix. Anything smaller is padded, anything longer is truncated.')
@@ -49,8 +52,8 @@ def main():
                               orient='records', lines=True, chunksize=5000)
     if args.tfrecord:
         import tensorflow as tf
-        if not args.save_sim:
-            raise Exception('TFRecord can only save a padded similarity matrix.')
+        if not (args.save_sim or args.save_wem):
+            raise Exception('TFRecord can only save a padded similarity matrix or two word embedding model vectors.')
         args.filename = args.filename + '.tfrecord'
         outpath = os.path.join(args.outdir, args.filename)
         options = tf.io.TFRecordOptions(compression_type="GZIP" if not args.no_compress else "")
@@ -66,6 +69,12 @@ def main():
     for df in chunks:
         for leftid, matches in df.groupby('left'):
             left = HTID(leftid, **htid_args)
+            if args.save_wem:
+                try:
+                    leftvec = left.vectors('glove')[1].mean(0)
+                except:
+                    logging.warning("Issue with left vec {}".format(left.htid))
+                    continue
             for j, match in matches.iterrows():
                 if n % 1000 == 0:
                     logging.info("{}, {}, {}, {}".format(n, len(stats_collector), leftid, (time.time()-start)/60))
@@ -73,9 +82,15 @@ def main():
                 right = HTID(rightid, **htid_args)
                 comp = HTIDComparison(left, right)
                 try:
+                    stats = dict()
                     if args.save_sim:
                         vec = comp.unrolled_sim(max_size=args.matrix_size)
-                        stats = dict(zip([str(k) for k in range(vec.shape[0])], vec))
+                        stats.update(dict(zip(['m'+str(k) for k in range(vec.shape[0])], vec)))
+                    if args.save_wem:
+                        rightvec = right.vectors('glove')[1].mean(0)
+                        wem_vec = np.concatenate([leftvec, rightvec])
+                        stats.update(dict(zip(['w'+str(k) for k in range(wem_vec.shape[0])], wem_vec)))
+                    if args.save_sim or args.save_wem:
                         stats['left'] = leftid
                         stats['right'] = rightid
                         if args.tfrecord:
@@ -97,7 +112,9 @@ def main():
         if args.tfrecord:
             out = pd.DataFrame(stats_collector)
             for i, row in out.iterrows():
-                serialized = _serialize_series(row, judgment_label_ref)
+                serialized = _serialize_series(row, judgment_label_ref,
+                                               sim_size=args.matrix_size**2 if args.save_sim else 0,
+                                               wem_size=dict(htid_args['vecfiles'])['glove'].dims*2 if args.save_wem else 0)
                 writer.write(serialized)
             stats_collector = []
         else:
