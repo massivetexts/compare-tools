@@ -52,7 +52,7 @@ def _serialize_series(row, label_ref, sim_size=100**2, wem_size=300*2):
     return serialized
 
 def parse_comparison_records(example_proto, labels='default', input_shape=(100,100,1),
-                             wem_shape=(300,2), parse_single=False):
+                             wem_shape=(2,300), parse_single=False):
     '''Definition for reading TFRecords. Input shape should be three-dimensional, with a channel at the end.'''
     if labels == 'default':
         labels = judgment_labels
