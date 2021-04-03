@@ -2,6 +2,7 @@ import argparse
 from compare_tools.hathimeta import get_json_meta
 from compare_tools.configuration import config
 import sys
+import json
 
 def main():
 
@@ -21,7 +22,14 @@ def main():
         except:
             errs += 1
             meta = None
-        args.outfile.write("{}\t{}\n".format(htid, meta))
+        if type(meta) is not str:
+            meta = json.dumps(meta)
+        try:
+            args.outfile.write("{}\t{}\n".format(htid, meta))
+        except:
+            print("Error with", meta)
+            print(type(meta))
+            #raise
         if (i == errs) & (i > 30):
             print('First 30 items all failed. Rather than error-catching, stopping script.')
             break

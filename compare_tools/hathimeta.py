@@ -86,7 +86,7 @@ class HathiMeta():
     
     def sample(self, n=1, fields=None):
         ''' Return a single random volume. '''
-        random_item_template = "SELECT {} FROM meta ORDER BY RANDOM() LIMIT {};"
+        random_item_template = "SELECT {} FROM meta WHERE htid in (SELECT htid FROM meta ORDER BY RANDOM() LIMIT {});"
         if not fields:
             fields = self.default_fields
         sql = random_item_template.format(self._field_call(fields), n)

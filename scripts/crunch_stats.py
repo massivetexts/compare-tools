@@ -72,6 +72,7 @@ def main():
             if args.save_wem:
                 try:
                     leftvec = left.vectors('glove')[1].mean(0)
+                    assert not np.isnan(leftvec).any()
                 except:
                     logging.warning("Issue with left vec {}".format(left.htid))
                     continue
@@ -88,6 +89,7 @@ def main():
                         stats.update(dict(zip(['m'+str(k) for k in range(vec.shape[0])], vec)))
                     if args.save_wem:
                         rightvec = right.vectors('glove')[1].mean(0)
+                        assert not np.isnan(rightvec).any()
                         wem_vec = np.concatenate([leftvec, rightvec])
                         stats.update(dict(zip(['w'+str(k) for k in range(wem_vec.shape[0])], wem_vec)))
                     if args.save_sim or args.save_wem:
