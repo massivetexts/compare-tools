@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import logging
 
+
 # match func should take an htid and return a dataframe with the following columns:
 def full_ground_truth(left_htid, ground_truth, meta):
     ''' Add Same-author ground truth'''
@@ -30,10 +31,12 @@ def results_runner(left, match_func, grouth_truth, meta, include_fp=False):
 
 def run_eval(htids, condition_name, match_func, gt, meta, just_stats=False, print_every=1000):
     collector = []
+    n = len(htids)
     for i, left in enumerate(htids):
         try:
-            if i % print_every == 0:
-                print(i)
+            if (i % print_every) == 0:
+                # change to info
+                logging.warning('Progress: {} ({}%) - \t {}'.format(i, int(100*i/n), condition_name))
             if just_stats:
                 results_raw, false_positives = results_runner(left, match_func, gt, meta, include_fp=True)
                 false_negatives = results_raw.groupby(['judgment'])['rank'].apply(lambda x: x.isna().sum())
@@ -48,8 +51,11 @@ def run_eval(htids, condition_name, match_func, gt, meta, just_stats=False, prin
                 results = results_runner(left, match_func, gt, meta)
                 results['condition'] = condition_name
                 collector.append(results)
+        except KeyboardInterrupt:
+            logging.warning('Interrupting eval, but still wrapping up and saving results. Ctrl+C again to kill.')
+            break
         except:
-            logging.warning('Issue with target ' + left)
+            logging.warning('Issue with target {} (i={})'.format(left, i))
             continue
     
     if just_stats:
@@ -83,26 +89,43 @@ def main():
     parser.add_argument('--min-count', '-c', type=int, default=1,
                         help='Minimum number of matching chunks between left and right.')
     #parser.add_argument('target_id_path', type=str, help="File with list of target ids to evaluation.")
+    parser.add_argument('--range', type=str, default=':', help='x:y range to specify subsets of data. :y and x: supported.')
     parser.add_argument('--debug', action="store_true")
     args = parser.parse_args()
+    
+    assert ':' in args.range
     
     # Args
     outpath = os.path.join(args.outdir, args.filename)
     
     print('Loading Ground Truth')
     gt = pd.read_parquet('/projects/saddl-main/sampling/ground_truth_meta_judgments.parquet')
-    gt = gt[~gt.judgment.isin(['AUTHOR', 'DIFF'])] # Both of these categories are randomly sampled, so not useful here
+    gt = gt[~gt.judgment.isin(['RANDDIFF', 'AUTHOR'])] #This category is randomly sampled, so not useful here
+    gt = gt.sample(frac=1, random_state=1234) # For any partial runs that exit prematurely
     targets = gt.left.unique()
+    
+    start_at, end_at = args.range.split(':')
+    if end_at != '':
+        if int(end_at) < len(targets):
+            targets = targets[:int(end_at)]
+    if start_at != '':
+        if int(start_at) < len(targets):
+            targets = targets[int(start_at):]
+        else:
+            print("Starting point ({}) later than the end of the dataset ({})".format(start_at, len(targets)))
+            return
+    
     if args.debug:
         targets = targets[:100]
-    meta = HathiMeta(config['metadb_path'])
+    meta = HathiMeta(config['test']['metadb_path'])
     
     print('Loading Annoy')
     ann = MTAnnoy(args.ann_location, dims=args.ann_dims)
-    
-    name = "max{}_n{}_c{}_ann{}".format(args.max_sim,
+    trees = ann.u.get_n_trees()
+    name = "max{}_n{}_c{}_t{}_ann{}".format(args.max_sim,
                                     args.results_per_chunk, 
                                     args.min_count,
+                                    trees,
                                     args.ann_name if args.ann_name else args.ann_location)
     print('Running Evaluation {} for {} ids'.format(name, len(targets)))
     matcher = lambda x: n_match_generator(x, ann, args.results_per_chunk, args.max_sim, args.min_count)
