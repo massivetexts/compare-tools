@@ -57,9 +57,9 @@ def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10,
                         currentseqs.add(seq)
                 
                 assert i == len(ind)
-                i += 1
                 ind.append(ix)
                 t.add_item(i, vec)
+                i += 1
 
         print("Total vecs", len(ind), end=',')
 
@@ -86,7 +86,7 @@ class MTAnnoy():
     '''
     
     def __init__(self, annoypath, dims):
-        self.u = AnnoyIndex(dims)
+        self.u = AnnoyIndex(dims, metric='angular')
         self.u.load(annoypath)
         
         # This index expects books are in consecutive runs, since it only
@@ -153,7 +153,7 @@ class MTAnnoy():
         details = self.ind.loc[htid]
         vol_df = []
 
-        for i in range(details['min'], details['max']+1):
+        for i in range(details['min'], details['max'] + 1):
             df = self._result_df(i, n=n, max_dist=max_dist, rank=rank)
             vol_df.append(df)
         df = pd.concat(vol_df)
