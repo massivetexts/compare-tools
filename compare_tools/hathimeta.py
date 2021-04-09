@@ -1,62 +1,76 @@
 import pandas as pd
+import dask.dataframe as dd
+import numpy as np
+import tempfile
+import os
+from dask.diagnostics import ProgressBar
 
 class HathiMeta():
+    HTTYPES = dict(htid=str, access=str, rights=str, ht_bib_key=str, description=str, source=str,
+               source_bib_num=str, oclc_num=str, isbn=str, issn=str, lccn=str, title=str,
+               imprint=str, rights_read_code=str, rights_timestamp=str, us_gov_doc_flag=int,
+              rights_date_used=float, pub_place=str, lang=str, bib_fmt=str, collection_code=str,
+              content_provider_code=str, responsible_entity_code=str, digitization_agent_code=str,
+              access_profile_code=str, author=str)
     
-    def __init__(self, db_path=None, default_fields='*'):
+    def __init__(self, data_path=None, default_fields='*'):
         '''
-        An SQLite-backed metadata accessor for HathiTrust information.
+        A Dask+Parquet accessor for Hathifiles info. Replaces a former SQLite-backed 
+        class, which would inexplicably need rebuilding from time to time.
         
-        db_path: Location of sql database. The default is an in-memory database.
-        The table names are not customizable. If creating a new database, data will
-        need to be imported with create_db(meta_path)
-        '''
-        
-        from sqlalchemy import create_engine
-        if not db_path:
-            conn_string = 'sqlite://'
-        else:
-            conn_string = 'sqlite:///' + db_path
-        
-        self.engine = create_engine(conn_string, echo=False)
-        
-        self.field_list = None
-        self.default_fields = default_fields
-        
-    def create_db(self, meta_path):
-        ''' Import Hathifiles CSV to the DB, rewriting if necessary.
-        Eventually, logic for extending the data beyond the Hathifiles and better
-        error catching for CSV-problems should exist here.
+        db_path: Location of parquet files.
         '''
         
-        # Needs smarter logic for addressing bad CSV formatting
-        chunks = pd.read_csv(meta_path, chunksize=25000, index_col='htid')
+        self.data_path = data_path
+        self.field_list = list(self.HTTYPES.keys())
+        self.default_fields = None
+        try:
+            self.ddf = dd.read_parquet(data_path, compression='snappy')
+        except FileNotFoundError:
+            self.ddf = None
+            print('No dataset exists yet. Run create_db to parse a raw CSV file.')
+            
+    def create_db(self, meta_path, chunk_size=100000):
+        ''' Process Hathifiles CSV for Dask-appropriate parquet.'''
+        
+        import os
+        import glob
+        fdir, fname = os.path.split(meta_path)
 
-        with self.engine.connect() as conn:
+        chunks = pd.read_csv(meta_path, dtype=self.HTTYPES, chunksize=chunk_size)
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            tmppaths = []
             for i, chunk in enumerate(chunks):
-                print(i, end=', ')
-                if i < 1:
-                    chunk.to_sql('meta', conn, if_exists='replace')
-                    self.field_list = chunk.columns.values
-                else:
-                    chunk.to_sql('meta', conn, if_exists='append')
-        
-            res = conn.execute('CREATE INDEX meta_htid ON meta (htid);')
-    
-    def extend_db(self, df):
+                print(i, end=',')
+                tmppath = os.path.join(tmpdirname, os.path.splitext(fname)[0] + f'.{i}.parquet')
+
+                chunk.to_parquet(path=tmppath, engine='pyarrow', compression='snappy')
+                tmppaths.append(tmppath)
+            print('Done writing temp files; indexing and saving final')
+
+            # Have dask read these unindexed parquet files, set the index, and save the final partitioned version
+            dd.read_parquet(tmppaths).set_index('htid').to_parquet(self.data_path, compression='snappy')
+            
+        self.ddf = dd.read_parquet(self.data_path, compression='snappy')
+
+    def extend_meta(self, df):
         ''' Add data to the metadata by passing a dataframe with htid and the 
         new columns.'''
-        newcols = [c for c in df.columns.tolist() if c !='htid']
-        df.to_sql('tmp', self.engine, if_exists='replace', index=False)
-
-        with self.engine.connect() as conn:
-            # Left join to preserve all original rows
-            conn.execute(('CREATE TABLE tmp2 AS SELECT meta.*,{} FROM meta '
-                         'LEFT JOIN tmp ON meta.htid=tmp.htid').format(
-                             self._field_call(newcols))
-                        )
-            conn.execute('DROP TABLE meta')
-            conn.execute('DROP TABLE tmp')
-            conn.execute('ALTER TABLE tmp2 RENAME TO meta')
+        with ProgressBar():
+            new_ddf = self.ddf.join(df, on='htid')
+            new_ddf.to_parquet(self.data_path+'.new')
+        
+        print('Extended files created. Deleting old files')
+        for file in os.listdir(self.data_path):
+            fname = os.path.join(self.data_path, file)
+            os.remove(fname)
+        os.removedirs(self.data_path)
+        os.rename(self.data_path+'.new', self.data_path)
+        
+        self.ddf = dd.read_parquet(self.data_path, compression='snappy')
+        
+    def extend_db(self, df):
+        self.extend_meta(df)
 
     def full_table(self):
         print('Deprecated: `full_table` is just a wrapper for HathiMeta.get_fields.')
@@ -71,51 +85,65 @@ class HathiMeta():
         single_item_template = 'SELECT {} FROM meta WHERE htid = "{}"'
         if not fields:
             fields = self.default_fields
-        sql = single_item_template.format(self._field_call(fields), htid)
-        return pd.read_sql_query(sql, self.engine).iloc[0]
+        # For consistency with prior version, we reset the index to keep 'htid' as a column
+        return self.ddf.loc[htid, fields].compute().reset_index().iloc[0]
     
     def get_where(self, where_clause, fields=None):
         '''
-        Retrieve all records WHERE {clause}
+        Retrieve all records WHERE {clause}. Using query syntax from pandas.
         '''
-        template = 'SELECT {} FROM meta WHERE {}'
         if not fields:
             fields = self.default_fields
-        sql = template.format(self._field_call(fields), where_clause)
-        return pd.read_sql_query(sql, self.engine)
+        return self.ddf.query(where_clause).loc[slice(None), fields].compute()
     
     def sample(self, n=1, fields=None):
-        ''' Return a single random volume. '''
-        random_item_template = "SELECT {} FROM meta WHERE htid in (SELECT htid FROM meta ORDER BY RANDOM() LIMIT {});"
+        ''' Return a single random volume for a random partition '''
+        randpart = np.random.randint(self.ddf.npartitions)
         if not fields:
             fields = self.default_fields
-        sql = random_item_template.format(self._field_call(fields), n)
-        results = pd.read_sql_query(sql, self.engine)
+        results = self.ddf.get_partition(randpart).loc[slice(None), fields].compute().sample(n)
+        results = results.reset_index()
         if n == 1:
             return results.iloc[0]
         return results
     
-    def get_fields(self, fields=None, chunksize=None, offset=None, limit=None):
-        '''Retrieve full table, filtered to the fields specified or '*'. Can be chunked.
+    def get_fields(self, fields=None, chunksize=None, by_partition=False, offset=None, limit=None):
+        '''Retrieve full table, filtered to the fields specified or '*'. Chunks no longer work.
         '''
         if not fields:
             fields = self.default_fields
-        sql = 'SELECT {} FROM meta'.format(self._field_call(fields))
-        return pd.read_sql_query(sql, self.engine, chunksize=chunksize)
+            
+        df = self.ddf.loc[slice(None), fields]
+        
+        if chunksize:
+            raise Exception('Chunking removed with parquet backend. Try by_partition=True instead')
+        if offset:
+            df = df.iloc[offset:]
+        if limit:
+            df = df.iloc[:limit]
+        if by_partition:
+            return self._partition_yielder(df)
+        else:
+            return df.compute()
     
+    def _partition_yielder(self, df):
+        ''' Return results as a generator, by partition'''
+        for i in range(df.npartitions):
+            yield df.get_partition(i).compute()
+        
     def _field_call(self, q):
         if q == '*':
-            return q
+            return None
         else:
             assert type(q) is list
-            return ",".join(q)
+            return q
     
     def __len__(self):
-        with self.engine.connect() as conn:
-            return conn.execute('SELECT COUNT(*) FROM meta').fetchone()[0]
+        return len(ddf)
     
     def __getitem__(self, label):
         return self.get_volume(label, fields=None)
+
 
 def get_json_meta(htid, parquet_root, id_resolver='pairtree'):
     ''' Quickly read a pairtree-organized metadata file that accompanies 
