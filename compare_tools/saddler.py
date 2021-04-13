@@ -28,11 +28,11 @@ class Saddler():
         self.mtannoy = MTAnnoy(ann_path, dims=ann_dims, prefault=prefault)
         self.htid_args = htid_args
     
-    def get_candidates(self, htid, n=300, min_count=3, max_dist=.25, save_to=None):
+    def get_candidates(self, htid, n=300, min_count=3, max_dist=.25, search_k=-1, save_to=None):
         '''
         save_to: location to save parquet output.
         '''
-        results = self.mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist)
+        results = self.mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
         if save_to:
             os.makedirs(os.path.split(save_to)[0], exist_ok=True) # Create directories if needed
             results.to_parquet(save_to, compression='snappy')
@@ -85,6 +85,8 @@ def main():
                             help="Number of ANN results to return per chunk")
     ann_parser.add_argument("--min-count", type=int, default=2,
                             help="Min number of matching chunks between books.")
+    ann_parser.add_argument("--search-k", type=int, default=-1,
+                            help="ANN search k parameter.")
     ann_parser.add_argument("--max-dist", type=float, default=.25,
                             help="Maximum distance between matching chunks.")
     ann_parser.add_argument("--overwrite", action="store_true",
@@ -131,6 +133,7 @@ def main():
                                                 n=args.results_per_chunk, 
                                                 min_count=args.min_count, 
                                                 max_dist=args.max_dist,
+                                                search_k=args.search_k,
                                                 save_to=outpath)
                 
                 if i % 10 == 0:

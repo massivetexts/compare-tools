@@ -121,12 +121,12 @@ class MTAnnoy():
         annoyid = self.get_id_by_mtid(mtid)
         return self.get_nns_by_item(annoyid, n, **kwargs)
 
-    def get_nns_by_item(self, i, n, include_distances=False, **kwargs):
+    def get_nns_by_item(self, i, n, include_distances=False, search_k=-1, **kwargs):
         '''
         Wrapper around Annoy's get_nns_by_item which returns the mtids for the ids.
         The original method is under MTAnnoy().u.get_nns_by_item
         '''
-        results = self.u.get_nns_by_item(i, n, include_distances=include_distances, **kwargs)
+        results = self.u.get_nns_by_item(i, n, include_distances=include_distances, search_k=search_k, **kwargs)
         if include_distances:
             results, distances = results
             
@@ -137,9 +137,9 @@ class MTAnnoy():
         else:
             return named_results
         
-    def _result_df(self, i=None, n=30, max_dist=None, rank=True):
+    def _result_df(self, i=None, n=30, max_dist=None, rank=True, search_k=-1):
         ''' Quick id-only lookup, returning a target_i/match_i/dist DataFrame'''
-        r, d = self.u.get_nns_by_item(i, n, include_distances=True)
+        r, d = self.u.get_nns_by_item(i, n, include_distances=True, search_k=search_k)
         df = pd.DataFrame([(i, match_i, dist) for match_i, dist in zip(r,d)],
                           columns=['target_i', 'match_i', 'dist'])
         if max_dist:
@@ -168,7 +168,7 @@ class MTAnnoy():
                   )
         return df
 
-    def get_named_result_df(self, i=None, mtid=None, htid=None, n=30, dedupe=False, max_dist=None):
+    def get_named_result_df(self, i=None, mtid=None, htid=None, n=30, dedupe=False, max_dist=None, search_k=-1):
         ''' Return matches with distances and ranks, in tabular format.'''
 
         try:
@@ -179,9 +179,9 @@ class MTAnnoy():
         if mtid:
             i = self.get_id_by_mtid(mtid)
         if i: # Gets a single item.
-            df = self._result_df(i, n=n, max_dist=max_dist, rank=True)
+            df = self._result_df(i, n=n, max_dist=max_dist, rank=True, search_k=search_k)
         elif htid:
-            df = self._result_df_by_htid(htid, n=n, rank=True, max_dist=max_dist, dedupe=dedupe)
+            df = self._result_df_by_htid(htid, n=n, rank=True, max_dist=max_dist, dedupe=dedupe, search_k=search_k)
         
         # Expand item ids to hathitrust id + seq. Replace() is for performance, though
         # really this process would be faster if something like 'keys' ( {'htid': id} for 
@@ -195,7 +195,7 @@ class MTAnnoy():
         
         return df[['target', 'target_seq', 'match', 'match_seq', 'dist', 'rank']]
     
-    def doc_match_stats(self, htid, n=30, min_count=None, max_dist=None):
+    def doc_match_stats(self, htid, n=30, min_count=None, max_dist=None, search_k=-1):
         '''
         Return a summed DF, that reduces chunk to chunk matches to doc to doc matching statistics:
             - count of matching chunks
@@ -212,7 +212,7 @@ class MTAnnoy():
         if min_count and min_count == 1:
             min_count = None
 
-        df = self.get_named_result_df(htid=htid, n=n, max_dist=max_dist, dedupe=True)
+        df = self.get_named_result_df(htid=htid, n=n, max_dist=max_dist, dedupe=True, search_k=search_k)
         
         stats = df.groupby(['target', 'match'])['dist'].aggregate(['count', 'mean']).sort_values(['count', 'mean'], ascending=False).reset_index(0)
         stats = pd.merge(stats, self.ind.loc[stats.index].length, right_index=True, left_index=True)
