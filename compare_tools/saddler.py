@@ -3,6 +3,7 @@ from compare_tools.comparison import HTIDComparison
 from compare_tools.MTAnnoy import MTAnnoy
 from htrc_features import utils
 import os
+import time
 
 class Saddler():
     '''
@@ -118,8 +119,9 @@ def main():
             htids = [htid.strip() for htid in args.htid_in]
         else:
             htids = args.htids
-
-        for htid in htids:
+        
+        starttime = time.time()
+        for i, htid in enumerate(htids):
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='ann.parquet'))
                 if os.path.exists(outpath) and not args.overwrite:
@@ -130,11 +132,15 @@ def main():
                                                 min_count=args.min_count, 
                                                 max_dist=args.max_dist,
                                                 save_to=outpath)
+                
+                if i % 10 == 0:
+                    progress = (time.time() - starttime)/60
+                    remaining = progress/i * (len(htids)-i)
+                    print(f"{i}/{len(htids)} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
             except KeyboardInterrupt:
                 raise
             
             except:
-                raise
                 print("Issue with {}".format(htid))
 
 if __name__ == '__main__':
