@@ -85,9 +85,9 @@ class MTAnnoy():
     Wrapper for Annoy that maintains HathiTrust HTID names.
     '''
     
-    def __init__(self, annoypath, dims):
+    def __init__(self, annoypath, dims, prefault=False):
         self.u = AnnoyIndex(dims, metric='angular')
-        self.u.load(annoypath)
+        self.u.load(annoypath, prefault=prefault)
         
         # This index expects books are in consecutive runs, since it only
         # only stores min annoy id and max annoy id
@@ -222,3 +222,7 @@ class MTAnnoy():
         if min_count:
             stats = stats[stats['count'] >= min_count]
         return stats
+
+    
+if __name__ == '__main__':
+    pass
