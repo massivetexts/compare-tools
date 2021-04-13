@@ -149,12 +149,12 @@ class MTAnnoy():
             df = df[['target_i', 'match_i', 'rank', 'dist']]
         return df
         
-    def _result_df_by_htid(self, htid, n=30, rank=True, max_dist=None, dedupe=True):
+    def _result_df_by_htid(self, htid, n=30, rank=True, max_dist=None, dedupe=True, search_k=-1):
         details = self.ind.loc[htid]
         vol_df = []
 
         for i in range(details['min'], details['max'] + 1):
-            df = self._result_df(i, n=n, max_dist=max_dist, rank=rank)
+            df = self._result_df(i, n=n, max_dist=max_dist, rank=rank, search_k=search_k)
             vol_df.append(df)
         df = pd.concat(vol_df)
 

@@ -123,10 +123,13 @@ def main():
             htids = args.htids
         
         starttime = time.time()
+        skipped = 0
         for i, htid in enumerate(htids):
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='ann.parquet'))
                 if os.path.exists(outpath) and not args.overwrite:
+                    print('skipping already processed: {}'.format(outpath))
+                    skipped += 1
                     continue
 
                 results = saddlr.get_candidates(htid,
@@ -136,10 +139,10 @@ def main():
                                                 search_k=args.search_k,
                                                 save_to=outpath)
                 
-                if i % 10 == 0:
+                if i % 1 == 0:
                     progress = (time.time() - starttime)/60
-                    remaining = progress/i * (len(htids)-i)
-                    print(f"{i}/{len(htids)} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
+                    remaining = progress/(i-skipped) * (len(htids)-i-skipped)
+                    print(f"{i-skipped}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
             except KeyboardInterrupt:
                 raise
             
