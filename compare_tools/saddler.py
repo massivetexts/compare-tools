@@ -83,9 +83,9 @@ def main():
     # Configure for the MTAnnoy candidate retrieval
     ann_parser.add_argument("--results-per-chunk", "-n", type=int, default=300,
                             help="Number of ANN results to return per chunk")
-    ann_parser.add_argument("--min_count", type=int, default=3,
+    ann_parser.add_argument("--min-count", type=int, default=2,
                             help="Min number of matching chunks between books.")
-    ann_parser.add_argument("--max_dist", type=float, default=.25,
+    ann_parser.add_argument("--max-dist", type=float, default=.25,
                             help="Maximum distance between matching chunks.")
     ann_parser.add_argument("--overwrite", action="store_true",
                             help="Overwrite files if they already exist. Otherwise, they're skipped")
