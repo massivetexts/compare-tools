@@ -74,6 +74,7 @@ def main():
                         help="Location of MTAnnoy index. Default is None, which tries to fall back on what's in the config file")
     parser.add_argument('--ann-dims', type=int, default=50,
                         help='Number of dimensions for the MTAnnoy index.')
+    parser.add_argument('--prefault', action='store_true', help='Load ANN into memory.')
     parser.add_argument("--data-root", type=str, default='/data/saddl/full/',
                         help="Location to save stubbytree data file outputs")
     ann_parser = subparsers.add_parser("Candidates",
@@ -114,7 +115,7 @@ def main():
         parser.print_help()
         return
     
-    saddlr = Saddler(ann_dims=args.ann_dims, ann_path=ann_path, prefault=False)
+    saddlr = Saddler(ann_dims=args.ann_dims, ann_path=ann_path, prefault=args.prefault)
     
     if args.command == 'Candidates':
         if args.htid_in:
