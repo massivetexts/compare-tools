@@ -32,8 +32,10 @@ class Saddler():
         # Load config file for params.
         try:
             from compare_tools.configuration import config
-            config.update(config['test'])
-            config.update(config['full'])
+            if 'test' in config:
+                config.update(config['test'])
+            if 'full' in config:
+                config.update(config['full'])
             self.config = config
         except:
             self.config = {}
@@ -192,6 +194,12 @@ def main():
         skipped = 0
         for i, htid in enumerate(htids):
             try:
+                outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='ann.parquet'))
+                if not args.overwrite and os.path.exists(outpath):
+                    print('File already found: {}'.format(outpath))
+                    skipped += 1
+                    continue
+    
                 results = saddlr.get_candidates(htid,
                                                 n=args.results_per_chunk, 
                                                 min_count=args.min_count, 
@@ -200,10 +208,10 @@ def main():
                                                 force=args.overwrite,
                                                 save=True)
                 
-                if i % 1 == 0:
+                if i % 2 == 1:
                     progress = (time.time() - starttime)/60
-                    remaining = progress/(i-skipped) * (len(htids)-i-skipped)
-                    print(f"{i-skipped}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
+                    remaining = progress/(i-skipped+1) * (len(htids)-i-skipped)
+                    print(f"{i-skipped+1}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
             except KeyboardInterrupt:
                 raise
             
