@@ -9,6 +9,7 @@ import pandas as pd
 import logging
 import rapidjson as json
 import dask.dataframe as dd
+from compare_tools.configuration import init_htid_args
 # For Prediction
 #import tensorflow as tf
 #from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
@@ -21,7 +22,7 @@ class Saddler():
     relationship format.
     '''
     
-    def __init__(self, htid_args={}, data_dir=None):
+    def __init__(self, htid_args=None, data_dir=None):
         self._mtannoy = None
         self._tf_model = None
         
@@ -44,8 +45,16 @@ class Saddler():
         except:
             raise Exception("If the following args are not provided, they need to be in ~/.htrc_config.yaml: data_dir")
 
-        self.htid_args = htid_args
+        self._htid_args = htid_args
     
+    @property
+    def htid_args(self):
+        ''' Args used by the HTID class (mainly pointers to various other classes used by 
+        each HTID object). If empty, tries to load from config'''
+        if not self._htid_args:
+            self._htid_args = init_htid_args(self.config)
+        return self._htid_args
+            
     def mtannoy(self, ann_path=None, ann_dims=None, prefault=False, force=False):
         if self._mtannoy and not force:
             return self._mtannoy
@@ -73,7 +82,7 @@ class Saddler():
         def top_2_accuracy(x, y):
             return top_k_categorical_accuracy(x, y, k=2)
 
-        print(model_path)
+        print("Loading model at", model_path)
         if not self._tf_model or force:
             self._tf_model = load_model(model_path, custom_objects={"top_2_accuracy":top_2_accuracy})
             
@@ -102,6 +111,7 @@ class Saddler():
     def get_predictions(self, htid, save_all=False, force_all=False,
                         save_candidates=False, save_predictions=False, save_output=False,
                         force_candidates=False, force_predictions=False, force_output=False,
+                        skip_json_output=False,
                         ann_args=dict(n=300, min_count=3, max_dist=.25)):
         '''
         Front to back prediction, from getting candidates to crunching predictions to formatting as JSON dataset.
@@ -123,9 +133,12 @@ class Saddler():
         
         candidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
         predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
-        data_entry = self.export_structured_data(htid, predictions, save=save_output, force=force_output)
-        
-        return data_entry
+        if skip_json_output:
+            print('Skipping json output')
+            return predictions
+        else:
+            data_entry = self.export_structured_data(htid, predictions, save=save_output, force=force_output)
+            return data_entry
     
     def _get_simmats_from_candidates(self, candidates, max_size=150, reshape=False, include_wem=True):
         '''
@@ -186,7 +199,7 @@ class Saddler():
             predictions = pd.read_parquet(outpath)
             return predictions
         
-        rightindex, (allsims, wems) = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
+        rightindex, inputs = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
         predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
            
         if save:
@@ -312,27 +325,46 @@ def main():
                         help="Location to save stubbytree data file outputs")
     ann_parser = subparsers.add_parser("Candidates",
                                        help="Save candidate relationships from ANN")
-    #b_parser = subparsers.add_parser("B")
+    prediction_parser = subparsers.add_parser("Predictions",
+                                       help="Run candidates through SaDDL model to get predicted relationship.")
 
     # Configure for the MTAnnoy candidate retrieval
-    ann_parser.add_argument('--ann-path', type=str, default=None,
-                            help="Location of MTAnnoy index. Default is None, which tries to fall " \
-                            "back on what's in the config file")
-    ann_parser.add_argument('--ann-dims', type=int, default=50,
-                            help='Number of dimensions for the MTAnnoy index.')
-    ann_parser.add_argument('--prefault', action='store_true', help='Load ANN into memory.')
-    ann_parser.add_argument("--results-per-chunk", "-n", type=int, default=300,
-                            help="Number of ANN results to return per chunk")
-    ann_parser.add_argument("--min-count", type=int, default=2,
-                            help="Min number of matching chunks between books.")
-    ann_parser.add_argument("--search-k", type=int, default=-1,
-                            help="ANN search k parameter.")
-    ann_parser.add_argument("--max-dist", type=float, default=.25,
-                            help="Maximum distance between matching chunks.")
+    for subparser in [ann_parser, prediction_parser]:
+        subparser.add_argument('--ann-path', type=str, default=None,
+                                help="Location of MTAnnoy index. Default is None, which tries to fall " \
+                                "back on what's in the config file")
+        subparser.add_argument('--ann-dims', type=int, default=50,
+                               help='Number of dimensions for the MTAnnoy index.')
+        subparser.add_argument("--results-per-chunk", "-n", type=int, default=300,
+                               help="Number of ANN results to return per chunk")
+        subparser.add_argument("--min-count", type=int, default=2,
+                               help="Min number of matching chunks between books.")
+        subparser.add_argument("--max-dist", type=float, default=.25,
+                               help="Maximum distance between matching chunks.")
+        subparser.add_argument("--htid-in", type=argparse.FileType('r'), default=None,
+                               help='File of HTIDs to process. If set, htids args provided on the command line are ignored.')
+        subparser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
+        subparser.add_argument('--prefault', action='store_true',
+                               help='Load ANN into memory.')
+        subparser.add_argument("--search-k", type=int, default=-1,
+                               help="ANN search k parameter.")
+    
     ann_parser.add_argument("--overwrite", action="store_true",
                             help="Overwrite files if they already exist. Otherwise, they're skipped")
-    ann_parser.add_argument("--htid-in", type=argparse.FileType('r'), default=None, help='File of HTIDs to process. If set, htids args provided on the command line are ignored.')
-    ann_parser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
+    
+    # Args for prediction parser
+    prediction_parser.add_argument('--model-path', type=str, default=None,
+                            help="Location of SaDDL model. Default is None, which tries to fall " \
+                            "back on what's in the config file")
+    prediction_parser.add_argument("--force-candidates", action="store_true",
+                            help="Reprocess and overwrite candidate raising process if they already exist")
+    prediction_parser.add_argument("--force-predictions", action="store_true",
+                            help="Reprocess and overwrite model inference if it's already been saved")
+    prediction_parser.add_argument("--force-json", action="store_true",
+                            help="Reprocess and overwrite final JSON files formatting if it's already been done")
+    prediction_parser.add_argument("--skip-json-output", action="store_true",
+                            help="Just do model inference and save the raw data in parquet, without formatting for " \
+                                   "dataset output.")
     
     args = parser.parse_args()
     
@@ -343,7 +375,7 @@ def main():
     saddlr = Saddler(data_dir=args.data_root)
     
     if args.command == 'Candidates':
-        # Pre-load MTAnnoy. Unnecessary, but more readable
+        # Pre-load MTAnnoy. Unnecessary, but more readable below
         saddlr.mtannoy(ann_dims=args.ann_dims, ann_path=args.ann_path, prefault=args.prefault)
         
         if args.htid_in:
@@ -377,8 +409,39 @@ def main():
                 raise
             
             except:
+                print("Issue with {}".format(htid))
+                
+    elif args.command == "Predictions":
+        # Pre-load TF Model, for readability
+        saddlr.tf_model(args.model_path)
+        
+        if args.htid_in:
+            htids = [htid.strip() for htid in args.htid_in]
+        else:
+            htids = args.htids
+    
+        for i, htid in enumerate(htids):
+            try:
+                saddlr.get_predictions(htid, save_all=True,
+                                       force_candidates=args.force_candidates,
+                                       force_predictions=args.force_predictions,
+                                       force_output=args.force_json,
+                                       skip_json_output=args.skip_json_output,
+                                       ann_args=dict(n=args.results_per_chunk, min_count=args.min_count,
+                                                     max_dist=args.max_dist, search_k=args.search_k,
+                                                     ann_path=args.ann_path, ann_dims=args.ann_dims,
+                                                     prefault=args.prefault)
+                                      )
+                
+            except KeyboardInterrupt:
+                raise
+            
+            except:
                 raise
                 print("Issue with {}".format(htid))
+                
+        
+        
 
 if __name__ == '__main__':
     main()
