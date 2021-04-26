@@ -7,17 +7,12 @@ import time
 import numpy as np
 import pandas as pd
 import logging
+import rapidjson as json
+import dask.dataframe as dd
 # For Prediction
-import tensorflow as tf
-from tensorflow.keras.models import Sequential, load_model
-from tensorflow.keras.layers import Dense, Reshape, Conv2D, MaxPooling2D, Flatten, Dropout
-from tensorflow.keras.metrics import top_k_categorical_accuracy
-from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
+#import tensorflow as tf
+#from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 from compare_tools.train_utils import judgment_labels, judgment_label_ref
-from tensorflow.keras.metrics import top_k_categorical_accuracy
-
-def top_2_accuracy(x, y):
-  return top_k_categorical_accuracy(x, y, k=2)
 
 class Saddler():
     '''
@@ -28,6 +23,7 @@ class Saddler():
     
     def __init__(self, htid_args={}, data_dir=None):
         self._mtannoy = None
+        self._tf_model = None
         
         # Load config file for params.
         try:
@@ -64,6 +60,25 @@ class Saddler():
         self._mtannoy = MTAnnoy(ann_path, dims=ann_dims, prefault=prefault)
         return self._mtannoy
     
+    def tf_model(self, model_path, force=False):
+        from tensorflow.keras.models import load_model
+        from tensorflow.keras.metrics import top_k_categorical_accuracy
+        
+        if not model_path:
+            if 'model_path' in self.config:
+                model_path = self.config['model_path']
+            else:
+                raise Exception("Need to either specify a model path or include in config file")
+    
+        def top_2_accuracy(x, y):
+            return top_k_categorical_accuracy(x, y, k=2)
+
+        print(model_path)
+        if not self._tf_model or force:
+            self._tf_model = load_model(model_path, custom_objects={"top_2_accuracy":top_2_accuracy})
+            
+        return self._tf_model
+    
     def get_candidates(self, htid, n=300, min_count=3, max_dist=.25, search_k=-1, force=False, 
                        save=False, ann_path=None, ann_dims=None, prefault=False):
         '''
@@ -72,12 +87,11 @@ class Saddler():
         '''
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='ann.parquet'))
 
-        mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
-        
         if not force and os.path.exists(outpath):
             print('File already found: {}'.format(outpath))
             results = pd.read_parquet(outpath)
         else:
+            mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
             results = mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
             if save:
                 os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
@@ -85,20 +99,39 @@ class Saddler():
 
         return results
 
-    def get_simmats(self, htid, reshape=False, max_size=150, include_wem=True, 
-                    ann_args=dict(n=300, min_count=3, max_dist=.25)):
+    def get_predictions(self, htid, save_all=False, force_all=False,
+                        save_candidates=False, save_predictions=False, save_output=False,
+                        force_candidates=False, force_predictions=False, force_output=False,
+                        ann_args=dict(n=300, min_count=3, max_dist=.25)):
         '''
-        For a target HTID, find match candidates with ANN, then return the target-candidate similarity matrices. 
-        Sim mats are unrolled, unless reshape argument is given. 
+        Front to back prediction, from getting candidates to crunching predictions to formatting as JSON dataset.
+        
+        Uses default arguments for many subprocesses, so if you need something more customized, run individually.
+        
+        save_all: Save intermediate and final data, to stubbytree format. If True, overwrites save_candidates,
+                save_predictions, and save_output; if False, those more fine-turned options are used.
+        force_all: Force processing for all steps, ignoring whether a file has already been saved.
         '''
-        results = self.get_candidates(htid, **ann_args)
-        rightindex, allsims = self._get_simmats_from_candidates(htid, reshape,
-                                                                max_size=max_size, 
-                                                                include_wem=include_wem)
-        return rightindex, allsims
+        if save_all:
+            save_candidates = True
+            save_predictions = True
+            save_output = True
+        if force_all:
+            force_candidates = True
+            force_predictions = True
+            force_output = True
+        
+        candidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
+        predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
+        data_entry = self.export_structured_data(htid, predictions, save=save_output, force=force_output)
+        
+        return data_entry
     
     def _get_simmats_from_candidates(self, candidates, max_size=150, reshape=False, include_wem=True):
         '''
+        For a target HTID, find match candidates with ANN, then return the target-candidate similarity matrices. 
+        Sim mats are unrolled, unless reshape argument is given. 
+        
         include_wem: Also return an averaged vec for each of the two full books, concatenated.
         '''
         htid = candidates.target.iloc[0]
@@ -141,6 +174,134 @@ class Saddler():
             wem_diff = np.subtract(leftvec, rightvecs)
             wem_concat = np.hstack([wem_mean, wem_diff])
             return rightindex, (allsims, wem_concat)
+        
+    def get_model_predictions(self, htid, candidates, model_path=None, metadb_path=None, save=False, force=False):
+        '''
+        Take left-right candidates and run it through the tensorflow model.
+        '''
+        outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='predictions.parquet'))
+        
+        if not force and os.path.exists(outpath):
+            print('Predictions already found: {}'.format(outpath))
+            predictions = pd.read_parquet(outpath)
+            return predictions
+        
+        rightindex, (allsims, wems) = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
+        predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
+           
+        if save:
+            os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
+            predictions.to_parquet(outpath, compression='snappy')
+        
+        return predictions
+    
+    def _predict_from_simmat(self, rightindex, inputs, model_path=None, metadb_path=None):
+        '''
+        Take Similarity matrix inputs to tensorflow model and format output.
+        '''
+        relatedness_weights = {'SWSM': 1, 'SWDE': 0.7, 'WP_DV': 0.7, 'PARTOF': 0.6,
+                               'CONTAINS': 0.6, 'OVERLAPS': 0.6, 'AUTHOR': 0.3,
+                               'SIMDIFF': 0.1, 'GRSIM': 0.4, 'RANDDIFF': 0}
+        
+        model = self.tf_model(model_path)
+        weights = [relatedness_weights[x] for x in judgment_labels]
+
+        predictions = model.predict(inputs)
+        predictions = pd.DataFrame(predictions, columns=judgment_labels)
+        predictions['htid'] = rightindex
+        best_predictions = np.argmax(predictions[judgment_labels].values, axis=1)
+        predictions['guess'] = [judgment_labels[i] for i in best_predictions]
+        predictions = predictions.sort_values(judgment_labels, ascending=False)
+        # pyarrow-dataset is awesome fast
+        filters = ('htid', 'in', tuple(predictions.htid.tolist()))
+        if not metadb_path and 'metadb_path' not in self.config:
+            raise Exception('Need reference to HathiMeta path (or just a parquet version of the Hathifiles)'
+                           'in config file (metadb_path)')
+        metadf = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
+                                 columns=['title','description','author', 'rights_date_used', 'oclc_num', 'isbn'],
+                                 filters=[filters]).compute()
+        predictions = predictions.merge(metadf.reset_index(), on='htid')
+        predictions['relatedness'] = np.average(predictions[judgment_labels], weights= weights, axis=1) # Weighted average of probabilities, with emphasis on SWSM
+        
+        return predictions
+    
+    def export_structured_data(self, htid, predictions, target=None, save=False, force=False):
+        '''
+        target: Series of metadata for target - this is *loaded* in this method, so only supply if you already
+            have it in memory and don't want to do the lookup again.
+        '''
+        outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
+        if not force and os.path.exists(outpath):
+            print('Dataset already found: {}'.format(outpath))
+            try:
+                with open(outpath, mode='r') as f:
+                    data_entry = json.load(f)
+                    return data_entry
+            except json.JSONDecodeError:
+                print("loading error. Will ignore loading")
+
+        if not target:
+            target = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
+                                     filters=[('htid', '==', htid)]
+                                    ).reset_index().compute().iloc[0]
+        
+        base_meta = ['htid', 'title', 'author', 'description', 'rights_date_used', 'oclc_num', 'isbn']
+        data_entry = dict(volume=target[base_meta].to_dict())
+        data_entry['volume']['link'] = "http://hdl.handle.net/2027/" + target['htid']
+        data_entry['related_metadata'] = dict()
+        data_entry['relationships'] = dict()
+        data_entry['recommendations'] = dict()
+
+        aut_prints = predictions.author.apply(alpha_fingerprint)
+        target_print = alpha_fingerprint(target.author)
+        by_author = predictions[aut_prints == target_print]
+
+        # Add Collected Metadata
+        def unique_nontarget_values(field, limit=['SWSM', 'SWSE'], df=by_author):
+            diff = (df[field] != target[field]) if target[field] else True
+            uniq = df[df.guess.isin(limit) & diff][field].unique().tolist()
+            return uniq if len(uniq) else []
+        data_entry['related_metadata']['other years'] = unique_nontarget_values('rights_date_used')
+        data_entry['related_metadata']['other titles'] = unique_nontarget_values('title')
+        data_entry['related_metadata']['other OCLC numbers'] = unique_nontarget_values('oclc_num')
+        data_entry['related_metadata']['other enumchron values'] = unique_nontarget_values('description')
+        data_entry['related_metadata']['titles within this work'] = unique_nontarget_values('title', ["CONTAINS"])
+        data_entry['related_metadata']['titles of works that contain this work'] = unique_nontarget_values('title', ["PARTOF"])
+
+        # Add Same Work Info
+        def get_dict_by_guess(guess):
+            a = by_author[by_author.guess == guess].sort_values(guess, ascending=False)
+            if a.empty:
+                return []
+            a = a[base_meta + [guess]]
+            a = a.rename(columns={'rights_date_used': 'year', guess: "confidence"})
+            a['confidence'] = a['confidence'].multiply(100).astype(int)
+            return a.to_dict(orient='records')
+
+        data_entry['relationships']['identical works'] = get_dict_by_guess("SWSM")
+        data_entry['relationships']['different expressions'] = get_dict_by_guess("SWDE")
+        data_entry['relationships']['other volumes of the larger work'] = get_dict_by_guess("WP_DV")
+        data_entry['relationships']['this work contains'] = get_dict_by_guess("CONTAINS")
+        data_entry['relationships']['this work is a part of'] = get_dict_by_guess("PARTOF")
+
+        other_works = predictions[~predictions.guess.isin(['SWSM', 'SWDE', 'WP_DV', 'CONTAINS', 'PARTOF'])]
+        recs = other_works[other_works.relatedness > 0.05].sort_values('relatedness').head(20)
+        data_entry['recommendations']['related authors'] = unique_nontarget_values('author', judgment_labels, df=recs)
+        data_entry['recommendations']['similar books'] = recs[base_meta].rename(columns={'rights_date_used': 'year'}).to_dict(orient='records')
+
+        if save:
+            os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
+            with open(outpath, mode='w') as f:
+                json.dump(data_entry, f)
+            
+        return data_entry
+
+def alpha_fingerprint(s):
+    ''' Fingerprint that is just alphabetical characters, lowercased and sorted.'''
+    if type(s) is not str:
+        return s
+    else:
+        return "".join(sorted([b for b in s.lower() if b.isalpha()]))
     
 def main():
     import argparse
