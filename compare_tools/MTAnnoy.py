@@ -3,6 +3,7 @@ from annoy import AnnoyIndex
 import pandas as pd
 import numpy as np
 from compare_tools.utils import split_mtid
+import os
 
 def create_annoy_index(filename, vector_filepaths, dims=300, n_trees=10, 
                        check_dupes=False, on_disk=True):
@@ -226,3 +227,60 @@ class MTAnnoy():
     
 if __name__ == '__main__':
     pass
+
+
+class TitleAnnoy():
+
+    def __init__(self, path, dims=50):
+        '''
+        AnnoyIndex for quick fuzzy matching of titles. Uses a subword byte-pair-encoding
+            vector space model called BPEmb.
+        '''
+        self.index_path = path
+        self.index_reference_path = os.path.splitext(path)[0] + '-ref.csv.gz'
+        self.u = AnnoyIndex(dims, 'angular')
+        self.dims = dims
+        
+    def load(self, prefault=False):
+        self.u.load(self.index_path, prefault=prefault)
+        
+        df_ref = pd.read_csv(self.index_reference_path, index_col=0, compression='gzip')
+        self.id2htid = df_ref['htid'].to_dict()
+        self.htid2id = df_ref['htid'].reset_index().set_index('htid')['index'].to_dict()
+        
+    def build_index(self, meta_parquet_path, vocab_size=50000, trees=100):
+        '''
+        Build an annoy index of metadata titles. Uses BPEEmb, so small vocab size is fine
+        
+        index_path: path with filename, where filename ends with '.ann'
+        trees: Number of trees to use for the Annoy index. More is better but slower to
+            build.
+        '''
+        from bpemb import BPEmb
+        from compare_tools.hathimeta import clean_title
+        
+        metadf = pd.read_parquet(meta_parquet_path, columns=['htid', 'title'])
+        bpemb_en = BPEmb(lang="en", dim=self.dims, vs=vocab_size)
+
+        # Insert vectors for documents into Annoy index, using the integer from
+        # the metadf index as the id
+        for i, row in metadf.reset_index().fillna('').astype(str).iterrows():
+            bpe_ids = bpemb_en.encode_ids(row.title)
+            # Sum of full title. Imperfect, would work better if BPEs for each word were averaged first.
+            vec = bpemb_en.vectors[bpe_ids].sum(0)
+            
+            trimmed_bpe_ids = bpemb_en.encode_ids(clean_title(row.title))
+            trimmed_vec = bpemb_en.vectors[trimmed_bpe_ids].sum(0)
+            
+            # Average, with more weight on the cleaned title.
+            weighted = np.average([vec, trimmed_vec], axis=0, weights=[.3, .7])
+            
+            self.u.add_item(i, weighted)
+            if i % 100000 == 0:
+                print(i, end=',')
+        print()
+
+        # will take about 30m for 100 dims and 8mi titles
+        self.u.build(trees)
+        self.u.save(index_path)
+        metadf.reset_index()['htid'].to_csv(self.index_reference_path, compression='gzip')
