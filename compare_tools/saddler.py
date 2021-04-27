@@ -1,6 +1,6 @@
 from compare_tools.utils import HTID
 from compare_tools.comparison import HTIDComparison
-from compare_tools.MTAnnoy import MTAnnoy
+from compare_tools.MTAnnoy import MTAnnoy, TitleAnnoy
 from htrc_features import utils
 import os
 import time
@@ -25,6 +25,7 @@ class Saddler():
     def __init__(self, htid_args=None, data_dir=None):
         self._mtannoy = None
         self._tf_model = None
+        self._titleann = None
         
         # Load config file for params.
         try:
@@ -207,6 +208,56 @@ class Saddler():
             predictions.to_parquet(outpath, compression='snappy')
         
         return predictions
+    
+    def titleann(self, path=None, dims=50, prefault=False, force=False):
+        if self._titleann and not force:
+            return self._titleann
+        else:
+            if not path:
+                path = self.config['title_ann_path']
+            self._titleann = TitleAnnoy(path, dims)
+            self._titleann.load()
+        
+    def get_meta_candidates(self, htid, sim_titles=True, same_authors=True, max_dist=.35):
+        assert sim_titles or same_authors
+        titleann = self.titleann()
+
+        if sim_titles:
+            idnum = titleann.htid2id[htid]
+
+            results = titleann.u.get_nns_by_item(idnum, n=25, include_distances=True)
+            if (results[1][-1] < .3):
+                results = titleann.u.get_nns_by_item(idnum, n=100, include_distances=True)
+
+            results = dict(zip(*results))
+
+            result_htids = [titleann.id2htid[id] for id in results.keys()]
+
+            if htid not in result_htids:
+                result_htids.append(htid)
+
+            # add self
+            meta = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
+                                               columns=['title', 'author'],
+                                               filters=[('htid', 'in', tuple(result_htids))]).compute()
+            meta = meta.loc[result_htids]
+            meta['distance'] = results.values()
+            # Trim to just 'pretty similar'
+            meta = meta[meta.distance <= max_dist]
+        else:
+            meta = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
+                                               columns=['title', 'author'],
+                                               filters=[('htid', '==', htid)]).compute()
+
+        author = meta.loc[htid, 'author']
+
+        if same_authors:
+            same_aut = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
+                                       columns=['title', 'author'],
+                                       filters=[('author', '==', author)]).compute()
+            return meta, same_aut
+        else:
+            return meta
     
     def _predict_from_simmat(self, rightindex, inputs, model_path=None, metadb_path=None):
         '''
