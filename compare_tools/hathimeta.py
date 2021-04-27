@@ -192,7 +192,7 @@ def clean_title(title):
     import re
     # Remove up to two trailing '/'-separated sections
     title = title[::-1].split('/', 2)[-1][::-1].strip()
-    title = title.split('; by')[0]
+    title = title.split('; by')[0].split('[by]')[0].split('; illustrated by')[0]
     title = re.sub('[\.,;\]\)\[] +?[\(\[]?(assembl|photo|arrang|select|compil|record|collect|edit|translat).{0,100}by.*\.?', '', title, flags=re.IGNORECASE)
     title = re.sub('[\.\,] [bB]y (the .{0,30})?([A-Z]\w+ [A-Z\w+]|author).*\.?', '', title)
-    return title
+    return title.strip().strip('.')
