@@ -132,7 +132,10 @@ class Saddler():
             force_predictions = True
             force_output = True
         
-        candidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
+        anncandidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
+        metacandidates = self.get_meta_candidates(htid, save=save_candidates, force=force_candidates)
+        candidates = pd.concat([anncandidates[['match', 'target']], 
+                                metacandidates[['match', 'target']]])
         predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
         if skip_json_output:
             print('Skipping json output')
@@ -219,9 +222,26 @@ class Saddler():
             self._titleann.load()
         
     def get_meta_candidates(self, htid, sim_titles=True, same_authors=True, max_dist=.35, 
-                            search_k=-1):
+                            search_k=-1, max_author_results=100, max_title_results=300, 
+                            raw_output=False, save=False, force=False):
+        '''
+        Get metadata-based candidates based on approximate title match (sim_titles=True) and same author
+        match (same_authors=True).
+        
+        raw_output: Return underlying data as a dataframe or a tuple of two dataframes. Otherwise,
+            results are returned as a single match/target/note dataframe
+        
+        max_author_results, max_title_results: Cap for how many candidates to return. A failsafe
+            in case of edge cases that have a great deal of matches (e.g. U.S. Gov't, books named 'Works')
+        '''
         assert sim_titles or same_authors
         titleann = self.titleann()
+        outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='meta.parquet'))
+        
+        if not force and os.path.exists(outpath):
+            print('Meta candidates already found: {}'.format(outpath))
+            candidates = pd.read_parquet(outpath)
+            return candidates
 
         if sim_titles:
             idnum = titleann.htid2id[htid]
@@ -246,20 +266,47 @@ class Saddler():
             meta['distance'] = results.values()
             # Trim to just 'pretty similar'
             meta = meta[meta.distance <= max_dist]
+            meta_candidates = meta.index.tolist()
         else:
             meta = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
                                                columns=['title', 'author'],
                                                filters=[('htid', '==', htid)]).compute()
-
         author = meta.loc[htid, 'author']
-
+        
+        if len(meta) > max_title_results:
+            title = title.head(max_title_results)
+        
         if same_authors:
             same_aut = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
                                        columns=['title', 'author'],
                                        filters=[('author', '==', author)]).compute()
-            return meta, same_aut
+            
+            if len(same_aut) > max_author_results:
+                same_aut = same_aut.sample(max_author_results)
+            
+            author_candidates = same_aut.index.tolist()
         else:
+            author_candidates = []
+        
+        if not raw_output or save:
+            # If saving results with raw_output flag, the saved results will still be formatted
+            out = pd.DataFrame(author_candidates + meta_candidates, columns=['match'])
+            # Why include htid if it's in the filename? For easier aggregate parquet reading later
+            out['target'] = htid
+            out['note'] = ['author']*len(author_candidates) + ['meta']*len(meta_candidates)
+            out = out[out.match != htid]
+        
+        if save:
+            os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
+            out.to_parquet(outpath, compression='snappy')
+            
+        if raw_output and same_authors:
+            return meta, same_aut
+        elif raw_output and not same_authors:
             return meta
+            
+        else:
+            return out
     
     def _predict_from_simmat(self, rightindex, inputs, model_path=None, metadb_path=None):
         '''
@@ -369,6 +416,12 @@ def alpha_fingerprint(s):
     else:
         return "".join(sorted([b for b in s.lower() if b.isalpha()]))
     
+def print_progress(starttime, i, skipped, print_every=2):
+    if i % print_every == 1:
+        progress = (time.time() - starttime)/60
+        remaining = progress/(i-skipped+1) * (len(htids)-i-skipped)
+        print(f"{i-skipped+1}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
+                    
 def main():
     import argparse
 
@@ -378,9 +431,25 @@ def main():
                         help="Location to save stubbytree data file outputs")
     ann_parser = subparsers.add_parser("Candidates",
                                        help="Save candidate relationships from ANN")
+    meta_parser = subparsers.add_parser("Meta_Candidates",
+                                       help="Save candidate relationships from metadata")
     prediction_parser = subparsers.add_parser("Predictions",
                                        help="Run candidates through SaDDL model to get predicted relationship.")
 
+    # Args for prediction parser
+    prediction_parser.add_argument('--model-path', type=str, default=None,
+                            help="Location of SaDDL model. Default is None, which tries to fall " \
+                            "back on what's in the config file")
+    prediction_parser.add_argument("--force-candidates", action="store_true",
+                            help="Reprocess and overwrite candidate raising process if they already exist")
+    prediction_parser.add_argument("--force-predictions", action="store_true",
+                            help="Reprocess and overwrite model inference if it's already been saved")
+    prediction_parser.add_argument("--force-json", action="store_true",
+                            help="Reprocess and overwrite final JSON files formatting if it's already been done")
+    prediction_parser.add_argument("--skip-json-output", action="store_true",
+                            help="Just do model inference and save the raw data in parquet, without formatting for " \
+                                   "dataset output.")
+    
     # Configure for the MTAnnoy candidate retrieval
     for subparser in [ann_parser, prediction_parser]:
         subparser.add_argument('--ann-path', type=str, default=None,
@@ -399,25 +468,19 @@ def main():
         subparser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
         subparser.add_argument('--prefault', action='store_true',
                                help='Load ANN into memory.')
+    
+    for subparser in [meta_parser, prediction_parser]:
+        subparser.add_argument('--title-ann-path', type=str, default=None,
+                                    help="Location of Annoy index for book titles. Default is None, which tries to fall " \
+                                    "back on what's in the config file")
+        
+    for subparser in [meta_parser, ann_parser, prediction_parser]:    
         subparser.add_argument("--search-k", type=int, default=-1,
                                help="ANN search k parameter.")
-    
-    ann_parser.add_argument("--overwrite", action="store_true",
-                            help="Overwrite files if they already exist. Otherwise, they're skipped")
-    
-    # Args for prediction parser
-    prediction_parser.add_argument('--model-path', type=str, default=None,
-                            help="Location of SaDDL model. Default is None, which tries to fall " \
-                            "back on what's in the config file")
-    prediction_parser.add_argument("--force-candidates", action="store_true",
-                            help="Reprocess and overwrite candidate raising process if they already exist")
-    prediction_parser.add_argument("--force-predictions", action="store_true",
-                            help="Reprocess and overwrite model inference if it's already been saved")
-    prediction_parser.add_argument("--force-json", action="store_true",
-                            help="Reprocess and overwrite final JSON files formatting if it's already been done")
-    prediction_parser.add_argument("--skip-json-output", action="store_true",
-                            help="Just do model inference and save the raw data in parquet, without formatting for " \
-                                   "dataset output.")
+        
+    for subparser in [meta_parser, ann_parser]:
+        ann_parser.add_argument("--overwrite", action="store_true",
+                                help="Overwrite files if they already exist. Otherwise, they're skipped")
     
     args = parser.parse_args()
     
@@ -427,17 +490,41 @@ def main():
     
     saddlr = Saddler(data_dir=args.data_root)
     
+    if args.htid_in:
+        htids = [htid.strip() for htid in args.htid_in]
+    else:
+        htids = args.htids
+    
+    starttime = time.time()
+    skipped = 0
+        
+    if args.command == 'Meta_Candidates':
+        saddler.titleann(args.title_ann_path)
+        
+        for i, htid in enumerate(htids):
+            try:
+                outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='meta.parquet'))
+                if not args.overwrite and os.path.exists(outpath):
+                    print('File already found: {}'.format(outpath))
+                    skipped += 1
+                    continue
+                    
+                results = saddler.get_meta_candidates(htid,
+                                                      save=True,
+                                                      search_k=args.search_k,
+                                                      force=args.overwrite)
+                
+                print_progress(starttime, i, skipped, print_every=10)
+                
+            except KeyboardInterrupt:
+                raise
+            except:
+                print("Issue with {}".format(htid))
+    
     if args.command == 'Candidates':
         # Pre-load MTAnnoy. Unnecessary, but more readable below
         saddlr.mtannoy(ann_dims=args.ann_dims, ann_path=args.ann_path, prefault=args.prefault)
         
-        if args.htid_in:
-            htids = [htid.strip() for htid in args.htid_in]
-        else:
-            htids = args.htids
-        
-        starttime = time.time()
-        skipped = 0
         for i, htid in enumerate(htids):
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='ann.parquet'))
@@ -454,10 +541,8 @@ def main():
                                                 force=args.overwrite,
                                                 save=True)
                 
-                if i % 2 == 1:
-                    progress = (time.time() - starttime)/60
-                    remaining = progress/(i-skipped+1) * (len(htids)-i-skipped)
-                    print(f"{i-skipped+1}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
+                print_progress(starttime, i, skipped, print_every=2)
+                    
             except KeyboardInterrupt:
                 raise
             
@@ -467,11 +552,6 @@ def main():
     elif args.command == "Predictions":
         # Pre-load TF Model, for readability
         saddlr.tf_model(args.model_path)
-        
-        if args.htid_in:
-            htids = [htid.strip() for htid in args.htid_in]
-        else:
-            htids = args.htids
     
         for i, htid in enumerate(htids):
             try:
