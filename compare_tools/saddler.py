@@ -218,14 +218,16 @@ class Saddler():
             self._titleann = TitleAnnoy(path, dims)
             self._titleann.load()
         
-    def get_meta_candidates(self, htid, sim_titles=True, same_authors=True, max_dist=.35):
+    def get_meta_candidates(self, htid, sim_titles=True, same_authors=True, max_dist=.35, 
+                            search_k=-1):
         assert sim_titles or same_authors
         titleann = self.titleann()
 
         if sim_titles:
             idnum = titleann.htid2id[htid]
 
-            results = titleann.u.get_nns_by_item(idnum, n=25, include_distances=True)
+            results = titleann.u.get_nns_by_item(idnum, n=25, include_distances=True, 
+                                                 search_k=search_k)
             if (results[1][-1] < .3):
                 results = titleann.u.get_nns_by_item(idnum, n=100, include_distances=True)
 
