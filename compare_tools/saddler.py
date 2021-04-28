@@ -89,7 +89,7 @@ class Saddler():
             
         return self._tf_model
     
-    def get_candidates(self, htid, n=300, min_count=3, max_dist=.25, search_k=-1, force=False, 
+    def get_candidates(self, htid, n=300, min_count=2, max_dist=.25, search_k=-1, force=False, 
                        save=False, ann_path=None, ann_dims=None, prefault=False):
         '''
         force: Force recrunch, even if the file already exists. Otherwise, existing file is loaded.
@@ -100,6 +100,13 @@ class Saddler():
         if not force and os.path.exists(outpath):
             print('File already found: {}'.format(outpath))
             results = pd.read_parquet(outpath)
+            
+            # Post cache filtering of rows
+            if results['count'].min() < min_count:
+                results = results[results['count'] >= min_count]
+                
+            if results['mean'].max() > max_dist:
+                results = results[results['mean'] <= max_dist]
         else:
             mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
             results = mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
@@ -463,9 +470,6 @@ def main():
                                help="Min number of matching chunks between books.")
         subparser.add_argument("--max-dist", type=float, default=.25,
                                help="Maximum distance between matching chunks.")
-        subparser.add_argument("--htid-in", type=argparse.FileType('r'), default=None,
-                               help='File of HTIDs to process. If set, htids args provided on the command line are ignored.')
-        subparser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
         subparser.add_argument('--prefault', action='store_true',
                                help='Load ANN into memory.')
     
@@ -477,9 +481,12 @@ def main():
     for subparser in [meta_parser, ann_parser, prediction_parser]:    
         subparser.add_argument("--search-k", type=int, default=-1,
                                help="ANN search k parameter.")
+        subparser.add_argument("--htid-in", type=argparse.FileType('r'), default=None,
+                               help='File of HTIDs to process. If set, htids args provided on the command line are ignored.')
+        subparser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
         
     for subparser in [meta_parser, ann_parser]:
-        ann_parser.add_argument("--overwrite", action="store_true",
+        subparser.add_argument("--overwrite", action="store_true",
                                 help="Overwrite files if they already exist. Otherwise, they're skipped")
     
     args = parser.parse_args()
@@ -499,7 +506,7 @@ def main():
     skipped = 0
         
     if args.command == 'Meta_Candidates':
-        saddler.titleann(args.title_ann_path)
+        saddlr.titleann(args.title_ann_path)
         
         for i, htid in enumerate(htids):
             try:
@@ -509,7 +516,7 @@ def main():
                     skipped += 1
                     continue
                     
-                results = saddler.get_meta_candidates(htid,
+                results = saddlr.get_meta_candidates(htid,
                                                       save=True,
                                                       search_k=args.search_k,
                                                       force=args.overwrite)
