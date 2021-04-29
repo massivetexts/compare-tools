@@ -252,25 +252,24 @@ class Saddler():
 
         if sim_titles:
             idnum = titleann.htid2id[htid]
-
             results = titleann.u.get_nns_by_item(idnum, n=25, include_distances=True, 
                                                  search_k=search_k)
             if (results[1][-1] < .3):
-                results = titleann.u.get_nns_by_item(idnum, n=100, include_distances=True)
+                results = titleann.u.get_nns_by_item(idnum, n=100, include_distances=True,
+                                                     search_k=search_k)
 
             results = dict(zip(*results))
-
-            result_htids = [titleann.id2htid[id] for id in results.keys()]
+            result_htids = {titleann.id2htid[id]: dist for id, dist in results.items() }
 
             if htid not in result_htids:
-                result_htids.append(htid)
-
-            # add self
+                result_htids[htid] = 0
+            
             meta = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
-                                               columns=['title', 'author'],
-                                               filters=[('htid', 'in', tuple(result_htids))]).compute()
-            meta = meta.loc[result_htids]
-            meta['distance'] = results.values()
+                                  columns=['title', 'author'],
+                                  filters=[('htid', 'in', tuple(result_htids.keys()))]).compute()
+            
+            meta = meta.loc[[htid for htid in result_htids.keys() if htid in meta.index]]
+            meta['distance'] = [result_htids[htid] for htid in meta.index]
             # Trim to just 'pretty similar'
             meta = meta[meta.distance <= max_dist]
             meta_candidates = meta.index.tolist()
@@ -279,6 +278,8 @@ class Saddler():
                                                columns=['title', 'author'],
                                                filters=[('htid', '==', htid)]).compute()
         author = meta.loc[htid, 'author']
+        if not author:
+            same_authors = False
         
         if len(meta) > max_title_results:
             title = title.head(max_title_results)
@@ -415,6 +416,41 @@ class Saddler():
                 json.dump(data_entry, f)
             
         return data_entry
+    import gzip
+
+    def inventory_files(self, prefix='/tmp/inventory', target_list=None):
+        '''
+        Inventory what data files have be crunched.
+
+        prefix: Where to save the inventory files.
+        target_list: Optional filename of target htids. If given, inventory will also save list of 
+            'to process' htids.
+        '''
+        import gzip
+        import glob
+        from htrc_features.utils import extract_htid
+        all_data_files = glob.glob(f'{self.data_dir}/**/**/*')
+
+        def get_htids_by_suffix(files, suffix):
+            all_suffix_files = [x for x in files if x.endswith(suffix)]
+            get_htid = lambda x: extract_htid(os.path.split(x.replace(suffix, ''))[1]).strip('.')
+            all_suffix_htids = [get_htid(file) for file in all_suffix_files]
+            return all_suffix_htids
+
+        if target_list:
+            target_htids = set(pd.read_csv(target_list, header=None)[0].tolist())
+
+        for suffix, name in [('.ann.parquet', 'ann'), ('.meta.parquet', 'meta'), 
+                             ('.predictions.parquet', 'predictions'), ('.saddl.json', 'data')]:
+            htids = get_htids_by_suffix(all_data_files, suffix)
+
+            with gzip.GzipFile(f"{prefix}-processed-{name}.gz", mode='w') as f:
+                f.write('\n'.join(htids).encode('utf-8'))
+
+            if target_list:
+                disjoint = target_htids.difference(htids)
+                with gzip.GzipFile(f"{prefix}-toprocess-{name}.gz", mode='w') as f:
+                    f.write('\n'.join(list(disjoint)).encode('utf-8'))
 
 def alpha_fingerprint(s):
     ''' Fingerprint that is just alphabetical characters, lowercased and sorted.'''
@@ -423,11 +459,15 @@ def alpha_fingerprint(s):
     else:
         return "".join(sorted([b for b in s.lower() if b.isalpha()]))
     
-def print_progress(starttime, i, skipped, print_every=2):
+def print_progress(starttime, i, skipped, total_n, print_every=2):
     if i % print_every == 1:
         progress = (time.time() - starttime)/60
-        remaining = progress/(i-skipped+1) * (len(htids)-i-skipped)
-        print(f"{i-skipped+1}/{len(htids)-skipped} completed in {progress:.1f}min (Est left: {remaining:.1f}min)")
+        remaining = progress/(i-skipped+1) * (total_n-i-skipped)
+        if remaining > 60*24:
+            remaining_str = f"{remaining/60:.1f}h"
+        else:
+            remaining_str = f"{remaining:.1f}min"
+        print(f"{i-skipped+1}/{total_n-skipped} completed in {progress:.1f}min (Est left: {remaining_str})")
                     
 def main():
     import argparse
@@ -436,12 +476,23 @@ def main():
     subparsers = parser.add_subparsers(dest='command')
     parser.add_argument("--data-root", type=str, default='/data/saddl/full/',
                         help="Location to save stubbytree data file outputs")
+    parser.add_argument("--limit-workers", type=int, default=None,
+                        help="Limit number of workers for Dask")
     ann_parser = subparsers.add_parser("Candidates",
                                        help="Save candidate relationships from ANN")
     meta_parser = subparsers.add_parser("Meta_Candidates",
                                        help="Save candidate relationships from metadata")
     prediction_parser = subparsers.add_parser("Predictions",
                                        help="Run candidates through SaDDL model to get predicted relationship.")
+    inventory_parser = subparsers.add_parser("Inventory",
+                                       help="Take an inventory of which htids have been crunched, per step.")
+    
+    inventory_parser.add_argument('--targets', type=str, default=None,
+                            help="Optional file with target htids. If provided, inventory will also save output " \
+                                  "files of remaining htids")
+    inventory_parser.add_argument('--prefix', type=str, default='/tmp/inventory',
+                            help="Prefix for inventory files. e.g. the default /tmp/inventory will write " \
+                                  "/tmp/inventory-processedann.gz, /tmp/inventory-processeddata.gz, etc.")
 
     # Args for prediction parser
     prediction_parser.add_argument('--model-path', type=str, default=None,
@@ -495,15 +546,24 @@ def main():
         parser.print_help()
         return
     
-    saddlr = Saddler(data_dir=args.data_root)
+    if args.limit_workers:
+        import dask
+        dask.config.set(num_workers=args.limit_workers)
     
-    if args.htid_in:
-        htids = [htid.strip() for htid in args.htid_in]
-    else:
-        htids = args.htids
+    saddlr = Saddler(data_dir=args.data_root)
+
     
     starttime = time.time()
     skipped = 0
+    errors = 0
+    
+    if args.command == 'Inventory':
+        saddlr.inventory_files(prefix=args.prefix, target_list=args.targets)
+    else:
+        if args.htid_in:
+            htids = [htid.strip() for htid in args.htid_in]
+        else:
+            htids = args.htids
         
     if args.command == 'Meta_Candidates':
         saddlr.titleann(args.title_ann_path)
@@ -515,18 +575,24 @@ def main():
                     print('File already found: {}'.format(outpath))
                     skipped += 1
                     continue
-                    
+                
                 results = saddlr.get_meta_candidates(htid,
                                                       save=True,
                                                       search_k=args.search_k,
                                                       force=args.overwrite)
                 
-                print_progress(starttime, i, skipped, print_every=10)
+                print_progress(starttime, i, skipped, len(htids), print_every=100)
                 
             except KeyboardInterrupt:
                 raise
+            
+            except KeyError:
+                print(f"Metadata key error with {htid} (not in Hathifiles or in Title Index)")
+                
             except:
-                print("Issue with {}".format(htid))
+                errors += 1
+                raise
+                print("Issue with {} (#{}; total errors: #{})".format(htid, i, errors))
     
     if args.command == 'Candidates':
         # Pre-load MTAnnoy. Unnecessary, but more readable below
@@ -548,10 +614,13 @@ def main():
                                                 force=args.overwrite,
                                                 save=True)
                 
-                print_progress(starttime, i, skipped, print_every=2)
+                print_progress(starttime, i, skipped, len(htids), print_every=2)
                     
             except KeyboardInterrupt:
                 raise
+                
+            except KeyError:
+                print(f"Key error with {htid}")
             
             except:
                 print("Issue with {}".format(htid))
