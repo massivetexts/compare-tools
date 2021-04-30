@@ -437,20 +437,31 @@ class Saddler():
             all_suffix_htids = [get_htid(file) for file in all_suffix_files]
             return all_suffix_htids
 
+        ann = set(get_htids_by_suffix(all_data_files, '.ann.parquet'))
+        meta = set(get_htids_by_suffix(all_data_files, '.meta.parquet'))
+        predictions = set(get_htids_by_suffix(all_data_files, '.predictions.parquet'))
+        data = set(get_htids_by_suffix(all_data_files, '.saddl.json'))
+        
+        justann = ann.difference(meta).difference(predictions)
+        justmeta = meta.difference(ann).difference(predictions)
+        candidates_no_predictions = ann.intersection(meta).difference(predictions)
+        predictions_no_data = predictions.difference(data)
+        
+        for htids, name in [(justann, 'justann'), (justmeta, 'justmeta'), 
+                            (candidates_no_predictions, 'candidates_no_predictions'),
+                            (predictions_no_data, 'predictions_no_data'),
+                            (data, 'data_complete')]:
+
+            with gzip.GzipFile(f"{prefix}-{name}.gz", mode='w') as f:
+                f.write('\n'.join(list(htids)).encode('utf-8'))
+        
         if target_list:
             target_htids = set(pd.read_csv(target_list, header=None)[0].tolist())
+            no_candidates = target_htids.difference(ann).difference(meta)
+            
+            with gzip.GzipFile(f"{prefix}-nocandidates.gz", mode='w') as f:
+                f.write('\n'.join(list(no_candidates)).encode('utf-8'))
 
-        for suffix, name in [('.ann.parquet', 'ann'), ('.meta.parquet', 'meta'), 
-                             ('.predictions.parquet', 'predictions'), ('.saddl.json', 'data')]:
-            htids = get_htids_by_suffix(all_data_files, suffix)
-
-            with gzip.GzipFile(f"{prefix}-processed-{name}.gz", mode='w') as f:
-                f.write('\n'.join(htids).encode('utf-8'))
-
-            if target_list:
-                disjoint = target_htids.difference(htids)
-                with gzip.GzipFile(f"{prefix}-toprocess-{name}.gz", mode='w') as f:
-                    f.write('\n'.join(list(disjoint)).encode('utf-8'))
 
 def alpha_fingerprint(s):
     ''' Fingerprint that is just alphabetical characters, lowercased and sorted.'''
