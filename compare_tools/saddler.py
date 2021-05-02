@@ -168,9 +168,18 @@ class Saddler():
             try:
                 leftvec = left.vectors('glove')[1].mean(0)
                 assert not np.isnan(leftvec).any()
+            except IndexError:
+                logging.warning(f"{left.htid} not in vecfiles.")
+                if include_wem:
+                    return None, None
+                else:
+                    return None
             except:
                 logging.warning("Issue with left vec {}".format(left.htid))
-                return None
+                if include_wem:
+                    return None, None
+                else:
+                    return None
         
         rightindex = []
         allsims = []
@@ -189,6 +198,8 @@ class Saddler():
                 if include_wem:
                     rightvec = right.vectors('glove')[1].mean(0)
                     rightvecs.append(rightvec)
+            except IndexError:
+                logging.warning(f"{rightid} not in vecfiles.")
             except:
                 logging.warning("Issue with {} v. {}".format(left.htid, right.htid))
                 continue
@@ -213,15 +224,19 @@ class Saddler():
             predictions = pd.read_parquet(outpath)
             return predictions
         
+        placeholder = pd.DataFrame([], columns=['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS',
+                                                'OVERLAPS', 'AUTHOR', 'SIMDIFF', 'GRSIM',
+                                                'RANDDIFF', 'htid', 'guess', 'title', 
+                                                'description', 'author', 'rights_date_used',
+                                                'oclc_num', 'isbn', 'relatedness'])
         if candidates.empty:
-            predictions = pd.DataFrame([], columns=['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS',
-                                                    'OVERLAPS', 'AUTHOR', 'SIMDIFF', 'GRSIM',
-                                                    'RANDDIFF', 'htid', 'guess', 'title', 
-                                                    'description', 'author', 'rights_date_used',
-                                                    'oclc_num', 'isbn', 'relatedness'])
+            predictions = placeholder
         else:
             rightindex, inputs = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
-            predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
+            if type(rightindex) is type(None):
+                return None # No data - different from empty predictions
+            else:
+                predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
            
         if save:
             os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
@@ -252,13 +267,14 @@ class Saddler():
             in case of edge cases that have a great deal of matches (e.g. U.S. Gov't, books named 'Works')
         '''
         assert sim_titles or same_authors
-        titleann = self.titleann()
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='meta.parquet'))
         
         if not force and os.path.exists(outpath):
             print('Meta candidates already found: {}'.format(outpath))
             candidates = pd.read_parquet(outpath)
             return candidates
+        
+        titleann = self.titleann()
 
         if sim_titles:
             idnum = titleann.htid2id[htid]
@@ -361,6 +377,11 @@ class Saddler():
         target: Series of metadata for target - this is *loaded* in this method, so only supply if you already
             have it in memory and don't want to do the lookup again.
         '''
+        if type(predictions) is type(None):
+            # Don't save dataset if no predictions given
+            # This is different than if the predictions dataset is an empty dataframe
+            return None 
+        
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
         if not force and os.path.exists(outpath):
             print('Dataset already found: {}'.format(outpath))
