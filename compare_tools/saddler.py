@@ -99,15 +99,19 @@ class Saddler():
 
         if not force and os.path.exists(outpath):
             print('File already found: {}'.format(outpath))
-            results = pd.read_parquet(outpath)
-            
-            # Post cache filtering of rows
-            if results['count'].min() < min_count:
-                results = results[results['count'] >= min_count]
+            try:
+                results = pd.read_parquet(outpath)
                 
-            if results['mean'].max() > max_dist:
+                # Post cache filtering of rows
+                results = results[results['count'] >= min_count]
                 results = results[results['mean'] <= max_dist]
-        else:
+                if min_prop_match:
+                    results = results[results['prop_match'] >= min_prop_match]
+                return results
+            
+            except OSError:
+                logging.warning("Issure loading ANN Candidates. Recrunching.")
+    
             mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
             results = mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
             if save:
