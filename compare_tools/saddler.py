@@ -89,7 +89,7 @@ class Saddler():
             
         return self._tf_model
     
-    def get_candidates(self, htid, n=300, min_count=2, max_dist=.25, search_k=-1, force=False, 
+    def get_candidates(self, htid, n=300, min_count=2, max_dist=.25, min_prop_match=False, search_k=-1, force=False, 
                        save=False, ann_path=None, ann_dims=None, prefault=False):
         '''
         force: Force recrunch, even if the file already exists. Otherwise, existing file is loaded.
@@ -114,6 +114,9 @@ class Saddler():
                 os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
                 results.to_parquet(outpath, compression='snappy')
 
+        if min_prop_match:
+            results = results[results['prop_match'] >= min_prop_match]
+                
         return results
 
     def get_predictions(self, htid, save_all=False, force_all=False,
@@ -210,8 +213,15 @@ class Saddler():
             predictions = pd.read_parquet(outpath)
             return predictions
         
-        rightindex, inputs = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
-        predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
+        if candidates.empty:
+            predictions = pd.DataFrame([], columns=['SWSM', 'SWDE', 'WP_DV', 'PARTOF', 'CONTAINS',
+                                                    'OVERLAPS', 'AUTHOR', 'SIMDIFF', 'GRSIM',
+                                                    'RANDDIFF', 'htid', 'guess', 'title', 
+                                                    'description', 'author', 'rights_date_used',
+                                                    'oclc_num', 'isbn', 'relatedness'])
+        else:
+            rightindex, inputs = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
+            predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
            
         if save:
             os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
@@ -530,7 +540,9 @@ def main():
                                help="Number of ANN results to return per chunk")
         subparser.add_argument("--min-count", type=int, default=2,
                                help="Min number of matching chunks between books.")
-        subparser.add_argument("--max-dist", type=float, default=.25,
+        subparser.add_argument("--min-prop-match", type=float, default=.03,
+                               help="Min proportion of match seen in target.")
+        subparser.add_argument("--max-dist", type=float, default=.18,
                                help="Maximum distance between matching chunks.")
         subparser.add_argument('--prefault', action='store_true',
                                help='Load ANN into memory.')
@@ -621,6 +633,7 @@ def main():
                                                 n=args.results_per_chunk, 
                                                 min_count=args.min_count, 
                                                 max_dist=args.max_dist,
+                                                min_prop_match=args.min_prop_match,
                                                 search_k=args.search_k,
                                                 force=args.overwrite,
                                                 save=True)
@@ -650,15 +663,18 @@ def main():
                                        ann_args=dict(n=args.results_per_chunk, min_count=args.min_count,
                                                      max_dist=args.max_dist, search_k=args.search_k,
                                                      ann_path=args.ann_path, ann_dims=args.ann_dims,
+                                                     min_prop_match=args.min_prop_match,
                                                      prefault=args.prefault)
                                       )
+                
+                print_progress(starttime, i, skipped, len(htids), print_every=10)
                 
             except KeyboardInterrupt:
                 raise
             
             except:
-                raise
                 print("Issue with {}".format(htid))
+                raise
                 
         
         
