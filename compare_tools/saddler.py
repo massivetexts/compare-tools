@@ -369,7 +369,7 @@ class Saddler():
                                  filters=[filters]).compute()
         predictions = predictions.merge(metadf.reset_index(), on='htid')
         predictions['relatedness'] = np.average(predictions[judgment_labels], weights= weights, axis=1) # Weighted average of probabilities, with emphasis on SWSM
-        
+        predictions = predictions.dropna(subset=judgment_labels)
         return predictions
     
     def export_structured_data(self, htid, predictions, target=None, save=False, force=False):
@@ -381,6 +381,8 @@ class Saddler():
             # Don't save dataset if no predictions given
             # This is different than if the predictions dataset is an empty dataframe
             return None 
+        # Redundant, because predictions shouldn't save with na's. Just for backward compat with older files
+        predictions = predictions.dropna(subset=judgment_labels)
         
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
         if not force and os.path.exists(outpath):
