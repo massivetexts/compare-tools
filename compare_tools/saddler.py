@@ -83,7 +83,7 @@ class Saddler():
         def top_2_accuracy(x, y):
             return top_k_categorical_accuracy(x, y, k=2)
 
-        print("Loading model at", model_path)
+        logging.info("Loading model at " + model_path)
         if not self._tf_model or force:
             self._tf_model = load_model(model_path, custom_objects={"top_2_accuracy":top_2_accuracy})
             
@@ -98,7 +98,7 @@ class Saddler():
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='ann.parquet'))
 
         if not force and os.path.exists(outpath):
-            print('File already found: {}'.format(outpath))
+            logging.debug('File already found: {}'.format(outpath))
             try:
                 results = pd.read_parquet(outpath)
                 
@@ -110,13 +110,13 @@ class Saddler():
                 return results
             
             except OSError:
-                logging.warning("Issure loading ANN Candidates. Recrunching.")
+                logging.warning("Issue loading ANN Candidates. Recrunching.")
     
-            mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
-            results = mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
-            if save:
-                os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
-                results.to_parquet(outpath, compression='snappy')
+        mtannoy = self.mtannoy(ann_path, ann_dims, prefault, force=False)
+        results = mtannoy.doc_match_stats(htid, n=n, min_count=min_count, max_dist=max_dist, search_k=search_k)
+        if save:
+            os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
+            results.to_parquet(outpath, compression='snappy')
 
         if min_prop_match:
             results = results[results['prop_match'] >= min_prop_match]
@@ -152,7 +152,7 @@ class Saddler():
                                 metacandidates[['match', 'target']]])
         predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
         if skip_json_output:
-            print('Skipping json output')
+            logging.debug('Skipping json output')
             return predictions
         else:
             data_entry = self.export_structured_data(htid, predictions, save=save_output, force=force_output)
@@ -224,7 +224,7 @@ class Saddler():
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='predictions.parquet'))
         
         if not force and os.path.exists(outpath):
-            print('Predictions already found: {}'.format(outpath))
+            logging.debug('Predictions already found: {}'.format(outpath))
             predictions = pd.read_parquet(outpath)
             return predictions
         
@@ -233,7 +233,7 @@ class Saddler():
                                                 'RANDDIFF', 'htid', 'guess', 'title', 
                                                 'description', 'author', 'rights_date_used',
                                                 'oclc_num', 'isbn', 'relatedness'])
-        if candidates.empty:
+        if len(candidates) <= 1:
             predictions = placeholder
         else:
             rightindex, inputs = self._get_simmats_from_candidates(candidates, reshape=(150,150,1))
@@ -274,7 +274,7 @@ class Saddler():
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='meta.parquet'))
         
         if not force and os.path.exists(outpath):
-            print('Meta candidates already found: {}'.format(outpath))
+            logging.debug('Meta candidates already found: {}'.format(outpath))
             candidates = pd.read_parquet(outpath)
             return candidates
         
@@ -390,13 +390,13 @@ class Saddler():
         
         outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
         if not force and os.path.exists(outpath):
-            print('Dataset already found: {}'.format(outpath))
+            logging.debug('Dataset already found: {}'.format(outpath))
             try:
                 with open(outpath, mode='r') as f:
                     data_entry = json.load(f)
                     return data_entry
             except json.JSONDecodeError:
-                print("loading error. Will ignore loading")
+                logging.error("loading error. Will ignore loading")
 
         if not target:
             target = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
@@ -515,17 +515,24 @@ def print_progress(starttime, i, skipped, total_n, print_every=2):
             remaining_str = f"{remaining/60:.1f}h"
         else:
             remaining_str = f"{remaining:.1f}min"
-        print(f"{i-skipped+1}/{total_n-skipped} completed in {progress:.1f}min (Est left: {remaining_str})")
+        logging.info(f"{i-skipped+1}/{total_n-skipped} completed in {progress:.1f}min (Est left: {remaining_str})")
                     
 def main():
     import argparse
+    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+    rootLogger = logging.getLogger()
 
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest='command')
     parser.add_argument("--data-root", type=str, default='/data/saddl/full/',
                         help="Location to save stubbytree data file outputs")
-    parser.add_argument("--limit-workers", type=int, default=None,
+    parser.add_argument("--limit-workers", type=int, default=4,
                         help="Limit number of workers for Dask")
+    parser.add_argument("--log-path", type=str, default='/tmp/',
+                        help="Location for log files.")
+    parser.add_argument("-v", "--verbose", help="increase output verbosity",
+                    action="store_true")
+    
     ann_parser = subparsers.add_parser("Candidates",
                                        help="Save candidate relationships from ANN")
     meta_parser = subparsers.add_parser("Meta_Candidates",
@@ -600,6 +607,22 @@ def main():
         import dask
         dask.config.set(num_workers=args.limit_workers)
     
+    np.warnings.filterwarnings('ignore', category=np.VisibleDeprecationWarning)
+    
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    
+    if args.log_path:
+        fileHandler = logging.FileHandler("{0}/saddl-{1}.log".format(args.log_path, time.time()))
+        fileHandler.setFormatter(logFormatter)
+        rootLogger.addHandler(fileHandler)
+
+    consoleHandler = logging.StreamHandler()
+    consoleHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(consoleHandler)
+    
     saddlr = Saddler(data_dir=args.data_root)
 
     
@@ -622,7 +645,7 @@ def main():
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='meta.parquet'))
                 if not args.overwrite and os.path.exists(outpath):
-                    print('File already found: {}'.format(outpath))
+                    logging.debug('File already found: {}'.format(outpath))
                     skipped += 1
                     continue
                 
@@ -637,12 +660,12 @@ def main():
                 raise
             
             except KeyError:
-                print(f"Metadata key error with {htid} (not in Hathifiles or in Title Index)")
+                logging.warning(f"Metadata key error with {htid} (not in Hathifiles or in Title Index)")
                 
             except:
                 errors += 1
                 raise
-                print("Issue with {} (#{}; total errors: #{})".format(htid, i, errors))
+                logging.exception("Issue with {} (#{}; total errors: #{})".format(htid, i, errors))
     
     if args.command == 'Candidates':
         # Pre-load MTAnnoy. Unnecessary, but more readable below
@@ -652,7 +675,7 @@ def main():
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='ann.parquet'))
                 if not args.overwrite and os.path.exists(outpath):
-                    print('File already found: {}'.format(outpath))
+                    logging.debug('File already found: {}'.format(outpath))
                     skipped += 1
                     continue
     
@@ -671,16 +694,28 @@ def main():
                 raise
                 
             except KeyError:
-                print(f"Key error with {htid}")
+                logging.warning(f"Key error with {htid}")
             
             except:
-                print("Issue with {}".format(htid))
+                logging.exception("Issue with {}".format(htid))
                 
     elif args.command == "Predictions":
         # Pre-load TF Model, for readability
         saddlr.tf_model(args.model_path)
     
         for i, htid in enumerate(htids):
+            if args.skip_json_output:
+                outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='predictions.parquet'))
+                force = args.force_predictions
+            else:
+                outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
+                force = args.force_json
+                
+            if not force and os.path.exists(outpath):
+                logging.debug('File already found: {}'.format(outpath))
+                skipped += 1
+                continue
+                
             try:
                 saddlr.get_predictions(htid, save_all=True,
                                        force_candidates=args.force_candidates,
@@ -700,7 +735,7 @@ def main():
                 raise
             
             except:
-                print("Issue with {}".format(htid))
+                logging.exception("Issue with {}".format(htid))
                 raise
                 
         
