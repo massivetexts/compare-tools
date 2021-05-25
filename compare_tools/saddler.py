@@ -30,8 +30,8 @@ class Saddler():
         # Load config file for params.
         try:
             from compare_tools.configuration import config
-            if 'test' in config:
-                config.update(config['test'])
+            #if 'test' in config:
+            #    config.update(config['test'])
             if 'full' in config:
                 config.update(config['full'])
             self.config = config
@@ -83,8 +83,8 @@ class Saddler():
         def top_2_accuracy(x, y):
             return top_k_categorical_accuracy(x, y, k=2)
 
-        logging.info("Loading model at " + model_path)
         if not self._tf_model or force:
+            logging.info("Loading model at " + model_path)
             self._tf_model = load_model(model_path, custom_objects={"top_2_accuracy":top_2_accuracy})
             
         return self._tf_model
@@ -126,7 +126,7 @@ class Saddler():
     def get_predictions(self, htid, save_all=False, force_all=False,
                         save_candidates=False, save_predictions=False, save_output=False,
                         force_candidates=False, force_predictions=False, force_output=False,
-                        skip_json_output=False,
+                        skip_json_output=False, title_ann_path=False,
                         ann_args=dict(n=300, min_count=3, max_dist=.25)):
         '''
         Front to back prediction, from getting candidates to crunching predictions to formatting as JSON dataset.
@@ -147,7 +147,7 @@ class Saddler():
             force_output = True
         
         anncandidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
-        metacandidates = self.get_meta_candidates(htid, save=save_candidates, force=force_candidates)
+        metacandidates = self.get_meta_candidates(htid, title_ann_path=title_ann_path, save=save_candidates, force=force_candidates)
         candidates = pd.concat([anncandidates[['match', 'target']], 
                                 metacandidates[['match', 'target']]])
         predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
@@ -256,8 +256,9 @@ class Saddler():
                 path = self.config['title_ann_path']
             self._titleann = TitleAnnoy(path, dims)
             self._titleann.load()
+            return self._titleann
         
-    def get_meta_candidates(self, htid, sim_titles=True, same_authors=True, max_dist=.35, 
+    def get_meta_candidates(self, htid, title_ann_path=None, sim_titles=True, same_authors=True, max_dist=.35, 
                             search_k=-1, max_author_results=100, max_title_results=300, 
                             raw_output=False, save=False, force=False):
         '''
@@ -278,7 +279,7 @@ class Saddler():
             candidates = pd.read_parquet(outpath)
             return candidates
         
-        titleann = self.titleann()
+        titleann = self.titleann(title_ann_path)
 
         if sim_titles:
             idnum = titleann.htid2id[htid]
@@ -507,16 +508,19 @@ def alpha_fingerprint(s):
     else:
         return "".join(sorted([b for b in s.lower() if b.isalpha()]))
     
-def print_progress(starttime, i, skipped, total_n, print_every=2):
-    if i % print_every == 1:
-        progress = (time.time() - starttime)/60
-        remaining = progress/(i-skipped+1) * (total_n-i-skipped)
-        if remaining > 60*24:
-            remaining_str = f"{remaining/60:.1f}h"
+def print_progress(starttime, completed_items, total_n, print_every=2):
+    if completed_items % print_every == 1:
+        progress = (time.time() - starttime)/60 # in minutes
+        remaining_items = total_n - completed_items
+        time_per_item = progress/completed_items
+        remaining_time = time_per_item * remaining_items
+        
+        if remaining_time > 60*24:
+            remaining_str = f"{remaining_time/60:.1f}h"
         else:
-            remaining_str = f"{remaining:.1f}min"
-        logging.info(f"{i-skipped+1}/{total_n-skipped} completed in {progress:.1f}min (Est left: {remaining_str})")
-                    
+            remaining_str = f"{remaining_time:.1f}min"
+        logging.info(f"{completed_items}/{total_n} completed in {progress:.1f}min (Est left: {remaining_str}; {remaining_items}, {time_per_item})")
+
 def main():
     import argparse
     logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
@@ -639,8 +643,6 @@ def main():
             htids = args.htids
         
     if args.command == 'Meta_Candidates':
-        saddlr.titleann(args.title_ann_path)
-        
         for i, htid in enumerate(htids):
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='meta.parquet'))
@@ -650,11 +652,12 @@ def main():
                     continue
                 
                 results = saddlr.get_meta_candidates(htid,
-                                                      save=True,
-                                                      search_k=args.search_k,
-                                                      force=args.overwrite)
+                                                     args.title_ann_path,
+                                                     save=True,
+                                                     search_k=args.search_k,
+                                                     force=args.overwrite)
                 
-                print_progress(starttime, i, skipped, len(htids), print_every=100)
+                print_progress(starttime, i+1-skipped, len(htids)-skipped, print_every=100)
                 
             except KeyboardInterrupt:
                 raise
@@ -664,8 +667,7 @@ def main():
                 
             except:
                 errors += 1
-                raise
-                logging.exception("Issue with {} (#{}; total errors: #{})".format(htid, i, errors))
+                logging.exception("Undiagnosed issue with {} (#{}; total errors: #{})".format(htid, i, errors))
     
     if args.command == 'Candidates':
         # Pre-load MTAnnoy. Unnecessary, but more readable below
@@ -688,7 +690,7 @@ def main():
                                                 force=args.overwrite,
                                                 save=True)
                 
-                print_progress(starttime, i, skipped, len(htids), print_every=2)
+                print_progress(starttime, i+1-skipped, len(htids)-skipped, print_every=2)
                     
             except KeyboardInterrupt:
                 raise
@@ -705,10 +707,10 @@ def main():
     
         for i, htid in enumerate(htids):
             if args.skip_json_output:
-                outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='predictions.parquet'))
+                outpath = os.path.join(saddlr.data_dir, utils.id_to_stubbytree(htid, format='predictions.parquet'))
                 force = args.force_predictions
             else:
-                outpath = os.path.join(self.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
+                outpath = os.path.join(saddlr.data_dir, utils.id_to_stubbytree(htid, format='saddl.json'))
                 force = args.force_json
                 
             if not force and os.path.exists(outpath):
@@ -718,6 +720,7 @@ def main():
                 
             try:
                 saddlr.get_predictions(htid, save_all=True,
+                                       title_ann_path=args.title_ann_path,
                                        force_candidates=args.force_candidates,
                                        force_predictions=args.force_predictions,
                                        force_output=args.force_json,
@@ -729,14 +732,13 @@ def main():
                                                      prefault=args.prefault)
                                       )
                 
-                print_progress(starttime, i, skipped, len(htids), print_every=10)
+                print_progress(starttime, i+1-skipped, len(htids)-skipped, print_every=10)
                 
             except KeyboardInterrupt:
                 raise
             
             except:
-                logging.exception("Issue with {}".format(htid))
-                raise
+                logging.exception("Undiagnosed issue with {}".format(htid))
                 
         
         
