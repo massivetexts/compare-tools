@@ -7,13 +7,39 @@ import time
 import numpy as np
 import pandas as pd
 import logging
-import rapidjson as json
+import json
 import dask.dataframe as dd
 from compare_tools.configuration import init_htid_args
 # For Prediction
 #import tensorflow as tf
 #from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
 from compare_tools.train_utils import judgment_labels, judgment_label_ref
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.int_, np.intc, np.intp, np.int8,
+                            np.int16, np.int32, np.int64, np.uint8,
+                            np.uint16, np.uint32, np.uint64)):
+
+            return int(obj)
+
+        elif isinstance(obj, (np.float_, np.float16, np.float32, np.float64)):
+            return float(obj)
+        
+        elif isinstance(obj, (np.complex_, np.complex64, np.complex128)):
+            return {'real': obj.real, 'imag': obj.imag}
+        
+        elif isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+    
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+
+        elif isinstance(obj, (np.void)) or isinstance(pd.NA, pd._libs.missing.NAType): 
+            return None
+
+        return json.JSONEncoder.default(self, obj)
+
 
 class Saddler():
     '''
@@ -147,7 +173,12 @@ class Saddler():
             force_output = True
         
         anncandidates = self.get_candidates(htid, save=save_candidates, force=force_candidates, **ann_args)
-        metacandidates = self.get_meta_candidates(htid, title_ann_path=title_ann_path, save=save_candidates, force=force_candidates)
+        try:
+            metacandidates = self.get_meta_candidates(htid, title_ann_path=title_ann_path, save=save_candidates, force=force_candidates)
+        except KeyError:
+            logging.error("f{htid} not in title index. Moving forward with only ANN candidates")
+            metacandidates = pd.DataFrame([], columns=['match', 'target'])
+            
         candidates = pd.concat([anncandidates[['match', 'target']], 
                                 metacandidates[['match', 'target']]])
         predictions = self.get_model_predictions(htid, candidates, save=save_predictions, force=force_predictions)
@@ -241,9 +272,12 @@ class Saddler():
                 return None # No data - different from empty predictions
             else:
                 predictions = self._predict_from_simmat(rightindex, inputs, model_path, metadb_path)
-           
+        
         if save:
             os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
+            if predictions.empty:
+                # Add a blank line to avoid empty parquet files
+                predictions.loc[1, ] = [0] * 10 + [pd.NA] * 8 + [0]
             predictions.to_parquet(outpath, compression='snappy')
         
         return predictions
@@ -375,6 +409,16 @@ class Saddler():
         predictions = predictions.merge(metadf.reset_index(), on='htid')
         predictions['relatedness'] = np.average(predictions[judgment_labels], weights= weights, axis=1) # Weighted average of probabilities, with emphasis on SWSM
         predictions = predictions.dropna(subset=judgment_labels)
+        
+        # coerce dtypes
+        for col in set(judgment_labels+['relatedness']).intersection(predictions.columns):
+            predictions[col] = predictions[col].fillna(pd.NA).astype(np.float32)
+        for col in ['rights_date_used']:
+            # Int64 (or a float) is needed for supporting nan
+            predictions[col] = predictions[col].fillna(pd.NA).fillna(pd.NA).astype('Int64')
+        for col in ['htid', 'guess', 'title', 'description', 'author', 'isbn', 'oclc_num']:
+            predictions[col] = predictions[col].astype(str)
+        
         return predictions
     
     def export_structured_data(self, htid, predictions, target=None, save=False, force=False):
@@ -418,7 +462,7 @@ class Saddler():
         # Add Collected Metadata
         def unique_nontarget_values(field, limit=['SWSM', 'SWSE'], df=by_author):
             diff = (df[field] != target[field]) if target[field] else True
-            uniq = df[df.guess.isin(limit) & diff][field].unique().tolist()
+            uniq = list(df[df.guess.isin(limit) & diff][field].unique())
             return uniq if len(uniq) else []
         data_entry['related_metadata']['other years'] = unique_nontarget_values('rights_date_used')
         data_entry['related_metadata']['other titles'] = unique_nontarget_values('title')
@@ -451,7 +495,7 @@ class Saddler():
         if save:
             os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
             with open(outpath, mode='w') as f:
-                json.dump(data_entry, f)
+                json.dump(data_entry, f, cls=NumpyEncoder)
             
         return data_entry
     import gzip
