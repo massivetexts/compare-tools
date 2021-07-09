@@ -1,7 +1,7 @@
 import os
 from htrc_features import FeatureReader, Volume, resolvers
 from htrc_features.feature_reader import group_tokenlist
-from htrc_features.utils import id_to_rsync, _id_encode
+from htrc_features.utils import id_to_rsync, _id_encode, id_to_stubbytree, extract_htid
 import pandas as pd
 import numpy as np
 import json
@@ -12,6 +12,7 @@ import uuid
 from SRP import Vector_file
 import SRP
 from .configuration import config
+from .train_utils import judgment_labels
 
 # These are global lists to allow thread-safe creation of new vectorfiles..
 # They'll be filled inside processes.
@@ -373,3 +374,37 @@ def concatenate_vector_files(inpath1, inpath2, outpath, newdim):
     with Vector_file(outpath, mode='a', offset_cache=True) as newvecf:
         print('Building new offset lookup')
         newvecf._build_offset_lookup(sep='-', force=True)
+        
+def load_with_target(target):
+    ''' Take a path and load the parquet file, adding a target column and renaming htid column to 'candidate' '''
+    df = pd.read_parquet(target)
+    dirname, clean_htid = os.path.split(target)
+    htid = extract_htid(clean_htid[:-20]) # strip ''.predictions.parquet'
+    df['target'] = htid
+    return df.rename(columns={'htid':'candidate'})
+    
+def add_stubs(df, colnames=['target', 'candidate']):
+    ''' Add columns for stubbytree libid and stub. Potentially useful for parquet partitioning.'''
+    for col in colnames:
+        df[[col[0]+'lib', col[0]+'stub']] = df[col].apply(id_to_stubbytree).apply(lambda x: pd.Series(x.split('/')[:2]))
+    return df
+
+def flip_judgments(df, candidate_colname='candidate'):
+    '''
+    Sort target/htid alphabetically, swapping PARTOF/CONTAINS values while we're at it.
+    
+    Adds a 'flipped' column. Drops things like title/oclc_num/description, since they're not
+    easy to reciprocate (and don't need to be in this particular dataset)
+    '''
+    df['flipped'] = df['target'] > df[candidate_colname]
+
+    new_target = df.loc[df.flipped, candidate_colname].values
+    df.loc[df.flipped, candidate_colname] = df.loc[df.flipped, 'target']
+    df.loc[df.flipped, 'target'] = new_target
+
+    new_contains = df.loc[df.flipped, 'PARTOF'].values
+    df.loc[df.flipped, 'PARTOF'] = df.loc[df.flipped, 'CONTAINS']
+    df.loc[df.flipped, 'CONTAINS'] = new_contains
+    
+    df = df[['target', 'candidate'] + judgment_labels + ['guess', 'relatedness', 'flipped']]
+    return df
