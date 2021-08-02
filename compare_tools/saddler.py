@@ -1,6 +1,3 @@
-from compare_tools.utils import HTID
-from compare_tools.comparison import HTIDComparison
-from compare_tools.MTAnnoy import MTAnnoy, TitleAnnoy
 from htrc_features import utils
 import os
 import time
@@ -13,7 +10,6 @@ from compare_tools.configuration import init_htid_args
 # For Prediction
 #import tensorflow as tf
 #from tensorflow.keras.wrappers.scikit_learn import KerasClassifier
-from compare_tools.train_utils import judgment_labels, judgment_label_ref
 
 class NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -83,6 +79,8 @@ class Saddler():
         return self._htid_args
             
     def mtannoy(self, ann_path=None, ann_dims=None, prefault=False, force=False):
+        from compare_tools.MTAnnoy import MTAnnoy
+        
         if self._mtannoy and not force:
             return self._mtannoy
         
@@ -196,6 +194,9 @@ class Saddler():
         
         include_wem: Also return an averaged vec for each of the two full books, concatenated.
         '''
+        from compare_tools.utils import HTID
+        from compare_tools.comparison import HTIDComparison
+        
         htid = candidates.target.iloc[0]
         left = HTID(htid, **self.htid_args)
         if include_wem:
@@ -283,6 +284,7 @@ class Saddler():
         return predictions
     
     def titleann(self, path=None, dims=50, prefault=False, force=False):
+        from compare_tools.MTAnnoy import TitleAnnoy
         if self._titleann and not force:
             return self._titleann
         else:
@@ -385,6 +387,7 @@ class Saddler():
         '''
         Take Similarity matrix inputs to tensorflow model and format output.
         '''
+        from compare_tools.train_utils import judgment_labels
         relatedness_weights = {'SWSM': 1, 'SWDE': 0.7, 'WP_DV': 0.7, 'PARTOF': 0.6,
                                'CONTAINS': 0.6, 'OVERLAPS': 0.6, 'AUTHOR': 0.3,
                                'SIMDIFF': 0.1, 'GRSIM': 0.4, 'RANDDIFF': 0}
@@ -426,6 +429,9 @@ class Saddler():
         target: Series of metadata for target - this is *loaded* in this method, so only supply if you already
             have it in memory and don't want to do the lookup again.
         '''
+        from compare_tools.utils import get_structured_data
+        from compare_tools.train_utils import judgment_labels
+        
         if type(predictions) is type(None):
             # Don't save dataset if no predictions given
             # This is different than if the predictions dataset is an empty dataframe
@@ -447,51 +453,9 @@ class Saddler():
             target = dd.read_parquet(self.config['metadb_path'], engine='pyarrow-dataset',
                                      filters=[('htid', '==', htid)]
                                     ).reset_index().compute().iloc[0]
+            
+        data_entry = get_structured_data(target)
         
-        base_meta = ['htid', 'title', 'author', 'description', 'rights_date_used', 'oclc_num', 'isbn']
-        data_entry = dict(volume=target[base_meta].to_dict())
-        data_entry['volume']['link'] = "http://hdl.handle.net/2027/" + target['htid']
-        data_entry['related_metadata'] = dict()
-        data_entry['relationships'] = dict()
-        data_entry['recommendations'] = dict()
-
-        aut_prints = predictions.author.apply(alpha_fingerprint)
-        target_print = alpha_fingerprint(target.author)
-        by_author = predictions[aut_prints == target_print]
-
-        # Add Collected Metadata
-        def unique_nontarget_values(field, limit=['SWSM', 'SWSE'], df=by_author):
-            diff = (df[field] != target[field]) if target[field] else True
-            uniq = list(df[df.guess.isin(limit) & diff][field].unique())
-            return uniq if len(uniq) else []
-        data_entry['related_metadata']['other years'] = unique_nontarget_values('rights_date_used')
-        data_entry['related_metadata']['other titles'] = unique_nontarget_values('title')
-        data_entry['related_metadata']['other OCLC numbers'] = unique_nontarget_values('oclc_num')
-        data_entry['related_metadata']['other enumchron values'] = unique_nontarget_values('description')
-        data_entry['related_metadata']['titles within this work'] = unique_nontarget_values('title', ["CONTAINS"])
-        data_entry['related_metadata']['titles of works that contain this work'] = unique_nontarget_values('title', ["PARTOF"])
-
-        # Add Same Work Info
-        def get_dict_by_guess(guess):
-            a = by_author[by_author.guess == guess].sort_values(guess, ascending=False)
-            if a.empty:
-                return []
-            a = a[base_meta + [guess]]
-            a = a.rename(columns={'rights_date_used': 'year', guess: "confidence"})
-            a['confidence'] = a['confidence'].multiply(100).astype(int)
-            return a.to_dict(orient='records')
-
-        data_entry['relationships']['identical works'] = get_dict_by_guess("SWSM")
-        data_entry['relationships']['different expressions'] = get_dict_by_guess("SWDE")
-        data_entry['relationships']['other volumes of the larger work'] = get_dict_by_guess("WP_DV")
-        data_entry['relationships']['this work contains'] = get_dict_by_guess("CONTAINS")
-        data_entry['relationships']['this work is a part of'] = get_dict_by_guess("PARTOF")
-
-        other_works = predictions[~predictions.guess.isin(['SWSM', 'SWDE', 'WP_DV', 'CONTAINS', 'PARTOF'])]
-        recs = other_works[other_works.relatedness > 0.05].sort_values('relatedness').head(20)
-        data_entry['recommendations']['related authors'] = unique_nontarget_values('author', judgment_labels, df=recs)
-        data_entry['recommendations']['similar books'] = recs[base_meta].rename(columns={'rights_date_used': 'year'}).to_dict(orient='records')
-
         if save:
             os.makedirs(os.path.split(outpath)[0], exist_ok=True) # Create directories if needed
             with open(outpath, mode='w') as f:
@@ -544,13 +508,6 @@ class Saddler():
             with gzip.GzipFile(f"{prefix}-nocandidates.gz", mode='w') as f:
                 f.write('\n'.join(list(no_candidates)).encode('utf-8'))
 
-
-def alpha_fingerprint(s):
-    ''' Fingerprint that is just alphabetical characters, lowercased and sorted.'''
-    if type(s) is not str:
-        return s
-    else:
-        return "".join(sorted([b for b in s.lower() if b.isalpha()]))
     
 def print_progress(starttime, completed_items, total_n, print_every=2):
     if completed_items % print_every == 1:
@@ -589,6 +546,8 @@ def main():
                                        help="Run candidates through SaDDL model to get predicted relationship.")
     inventory_parser = subparsers.add_parser("Inventory",
                                        help="Take an inventory of which htids have been crunched, per step.")
+    ingest_parser = subparsers.add_parser("DB_Ingest",
+                                   help="Take predictions.parquet files and add to a duckdb database.")
     
     inventory_parser.add_argument('--targets', type=str, default=None,
                             help="Optional file with target htids. If provided, inventory will also save output " \
@@ -610,6 +569,8 @@ def main():
     prediction_parser.add_argument("--skip-json-output", action="store_true",
                             help="Just do model inference and save the raw data in parquet, without formatting for " \
                                    "dataset output.")
+    
+    ingest_parser.add_argument('--db-path', type='str', default='/tmp/saddl-ingest.duckdb', help='location of duckdb database')
     
     # Configure for the MTAnnoy candidate retrieval
     for subparser in [ann_parser, prediction_parser]:
@@ -633,10 +594,12 @@ def main():
         subparser.add_argument('--title-ann-path', type=str, default=None,
                                     help="Location of Annoy index for book titles. Default is None, which tries to fall " \
                                     "back on what's in the config file")
-        
+    
     for subparser in [meta_parser, ann_parser, prediction_parser]:    
         subparser.add_argument("--search-k", type=int, default=-1,
                                help="ANN search k parameter.")
+        
+    for subparser in [meta_parser, ann_parser, prediction_parser, ingest_parser]:  
         subparser.add_argument("--htid-in", type=argparse.FileType('r'), default=None,
                                help='File of HTIDs to process. If set, htids args provided on the command line are ignored.')
         subparser.add_argument("htids", nargs='*', help='HTIDs to process. Alternately, provide --htid-in')
@@ -644,6 +607,8 @@ def main():
     for subparser in [meta_parser, ann_parser]:
         subparser.add_argument("--overwrite", action="store_true",
                                 help="Overwrite files if they already exist. Otherwise, they're skipped")
+        
+    
     
     args = parser.parse_args()
     
@@ -685,8 +650,39 @@ def main():
             htids = [htid.strip() for htid in args.htid_in]
         else:
             htids = args.htids
+            
+    if args.command == 'DB_Ingest':
+        import duckdb
+        from compare_tools.utils import load_with_target, add_stubs, flip_judgments
         
-    if args.command == 'Meta_Candidates':
+        if args.db_path == '/tmp/saddl-ingest.duckdb':
+            logging.info(f"No db path supplied. Using default: {args.db_path}")
+        
+        
+        with duckdb.connect(args.db_path, read_only=False) as con:
+            con.execute("CREATE TABLE IF NOT EXIST predictions(target VARCHAR, candidate VARCHAR, "
+                "SWSM FLOAT, SWDE FLOAT, WP_DV FLOAT, PARTOF FLOAT, CONTAINS FLOAT, "
+                "\"OVERLAPS\" FLOAT, AUTHOR FLOAT, SIMDIFF FLOAT, GRSIM FLOAT, RANDDIFF FLOAT, "
+                "guess VARCHAR, relatedness FLOAT, flipped BOOLEAN)").fetchall()
+            con.execute("DROP INDEX IF EXISTS target_idx;")
+            con.execute("DROP INDEX IF EXISTS candidate_idx;")
+
+            for i, htid in enumerate(htids):
+                path = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='predictions.parquet'))
+                try:
+                    df = load_with_target(path)
+                    df = flip_judgments(df)
+                    rel = con.from_df(df)
+                    rel.insert_into('predictions')
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    errors += 1
+                    logging.exception("Undiagnosed issue with {} (#{}; total errors: #{})".format(htid, i, errors))
+                
+        
+        
+    elif args.command == 'Meta_Candidates':
         for i, htid in enumerate(htids):
             try:
                 outpath = os.path.join(args.data_root, utils.id_to_stubbytree(htid, format='meta.parquet'))
