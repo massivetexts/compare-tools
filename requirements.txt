@@ -1,4 +1,4 @@
 -e git+https://github.com/massivetexts/htrc-feature-reader@3b124a1c6620e4a63d75e227f145ef638b0c9523#egg=htrc_feature_reader
-numpy==1.16.4
+numpy==1.22.0
 pandas==0.24.2
 pymarc==3.1.13
